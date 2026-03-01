@@ -12,6 +12,8 @@
 import { useState, useCallback } from 'react';
 import { useBatteryStore } from '../hooks/useBatteryState';
 import { useSimulation } from '../hooks/useSimulation';
+import ExportButton from './ExportButton';
+import PackBuilder from './PackBuilder';
 
 export default function Controls() {
   const {
@@ -310,6 +312,19 @@ export default function Controls() {
         >
           Apply Configuration
         </button>
+      </div>
+
+      {/* ─── Data Export ────────────────────────────────────────── */}
+      <div className="border-t border-panel-border pt-2">
+        <h4 className="text-[10px] text-panel-muted uppercase tracking-wider mb-2">
+          Data Export
+        </h4>
+        <ExportButton />
+      </div>
+
+      {/* ─── Pack Builder ───────────────────────────────────────── */}
+      <div className="border-t border-panel-border pt-2">
+        <PackBuilder />
       </div>
     </div>
   );

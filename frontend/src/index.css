@@ -2,6 +2,26 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── CSS Custom Properties for Theming ───────────────────────────────── */
+:root,
+:root.dark {
+  --bg: #0f172a;
+  --surface: #1e293b;
+  --border: #334155;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --grid: #1e293b;
+}
+
+:root.light {
+  --bg: #f1f5f9;
+  --surface: #ffffff;
+  --border: #cbd5e1;
+  --text: #1e293b;
+  --muted: #64748b;
+  --grid: #e2e8f0;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -10,20 +30,28 @@
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--bg);
+  color: var(--text);
   overflow: hidden;
 }
+
+/* Light theme overrides for Tailwind utility classes */
+.light .bg-panel-bg { background-color: var(--bg) !important; }
+.light .bg-panel-surface { background-color: var(--surface) !important; }
+.light .border-panel-border { border-color: var(--border) !important; }
+.light .text-panel-text { color: var(--text) !important; }
+.light .text-panel-muted { color: var(--muted) !important; }
+.light .text-white { color: #0f172a !important; }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 4px;
 }
 ::-webkit-scrollbar-track {
-  background: #0f172a;
+  background: var(--bg);
 }
 ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: var(--border);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {

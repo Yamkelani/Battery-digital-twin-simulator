@@ -6,10 +6,15 @@ Provides HTTP endpoints for:
     - Simulation configuration and control
     - Battery cell parameter management
     - Historical data retrieval
-    - Static data (profiles, presets)
+    - Export (CSV / JSON)
+    - EIS impedance spectrum
+    - Pack management
 """
 
+import csv
+import io
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import sys, os
@@ -271,3 +276,117 @@ async def get_visualization_data() -> Dict[str, Any]:
     """Get data formatted for 3D visualization."""
     engine = get_engine()
     return _convert_numpy(engine.cell.get_3d_visualization_data())
+
+
+# ─── Export Endpoints ────────────────────────────────────────────────────────
+
+@router.get("/export/json")
+async def export_json():
+    """Download full simulation history as JSON."""
+    engine = get_engine()
+    history = engine.history
+    if not history:
+        raise HTTPException(status_code=404, detail="No simulation data to export")
+
+    return JSONResponse(
+        content=_convert_numpy(history),
+        headers={"Content-Disposition": "attachment; filename=battery_simulation.json"},
+    )
+
+
+@router.get("/export/csv")
+async def export_csv():
+    """Download full simulation history as CSV."""
+    engine = get_engine()
+    history = engine.history
+    if not history:
+        raise HTTPException(status_code=404, detail="No simulation data to export")
+
+    # Determine columns from first entry (skip nested dicts/lists)
+    first = history[0]
+    columns = [k for k, v in first.items()
+               if not isinstance(v, (dict, list, np.ndarray))]
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=columns, extrasaction="ignore")
+    writer.writeheader()
+    for row in history:
+        clean = {}
+        for c in columns:
+            val = row.get(c)
+            if isinstance(val, (np.integer,)):
+                val = int(val)
+            elif isinstance(val, (np.floating,)):
+                val = float(val)
+            elif isinstance(val, np.bool_):
+                val = bool(val)
+            clean[c] = val
+        writer.writerow(clean)
+
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=battery_simulation.csv"},
+    )
+
+
+# ─── EIS / Nyquist Endpoint ─────────────────────────────────────────────────
+
+@router.get("/eis")
+async def get_eis_spectrum(temp_c: float = 25.0) -> Dict[str, Any]:
+    """Compute EIS impedance spectrum from the 2RC equivalent circuit model."""
+    engine = get_engine()
+    T_k = temp_c + 273.15
+    spectrum = engine.cell.ecm.impedance_spectrum(T=T_k)
+    return _convert_numpy(spectrum)
+
+
+# ─── Pack Endpoints ──────────────────────────────────────────────────────────
+
+_pack = None
+
+
+def get_pack():
+    global _pack
+    return _pack
+
+
+def set_pack(pack):
+    global _pack
+    _pack = pack
+
+
+@router.get("/pack/status")
+async def get_pack_status() -> Dict[str, Any]:
+    """Get current pack-level status."""
+    pack = get_pack()
+    if pack is None:
+        return {"status": "no_pack", "message": "No pack configured"}
+    summary = pack.get_cell_summary()
+    return _convert_numpy({"status": "ok", "cells": summary, "n_cells": pack.n_cells})
+
+
+@router.post("/pack/configure")
+async def configure_pack(
+    n_series: int = 4,
+    n_parallel: int = 2,
+    capacity_ah: float = 50.0,
+    variation_pct: float = 2.0,
+) -> Dict[str, Any]:
+    """Create / reconfigure the battery pack."""
+    from models.battery_pack import BatteryPack, PackConfig
+
+    cfg = PackConfig(
+        n_series=n_series,
+        n_parallel=n_parallel,
+        base_capacity_ah=capacity_ah,
+        capacity_variation_pct=variation_pct,
+    )
+    pack = BatteryPack(cfg)
+    set_pack(pack)
+    return {
+        "status": "ok",
+        "message": f"Pack created: {n_series}S{n_parallel}P ({pack.n_cells} cells)",
+        "n_cells": pack.n_cells,
+    }

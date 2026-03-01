@@ -6,6 +6,7 @@ Manages WebSocket connections for:
     - Real-time simulation state streaming
     - Client-initiated simulation control (start/pause/resume/reset)
     - Parameter updates during simulation
+    - Pack configuration messages (validated via Pydantic)
 """
 
 import json
@@ -13,6 +14,8 @@ import asyncio
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import Dict, Any, Set
+
+from api.schemas import parse_ws_message
 
 ws_router = APIRouter()
 
@@ -118,6 +121,17 @@ async def simulation_websocket(websocket: WebSocket):
         while True:
             # Receive client commands
             data = await websocket.receive_json()
+
+            # ── Validate with Pydantic ───────────────────────────────
+            try:
+                msg = parse_ws_message(data)
+            except Exception as ve:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Invalid message: {ve}",
+                })
+                continue
+
             action = data.get("action", "")
 
             if action == "start":
@@ -235,6 +249,28 @@ async def simulation_websocket(websocket: WebSocket):
                 await websocket.send_json({
                     "type": "config",
                     "ambient_temp_c": temp_c,
+                })
+
+            elif action == "configure_pack":
+                from models.battery_pack import BatteryPack, PackConfig
+                from api.routes import set_pack
+
+                pack_cfg = PackConfig(
+                    n_series=data.get("n_series", 4),
+                    n_parallel=data.get("n_parallel", 2),
+                    base_capacity_ah=data.get("capacity_ah", 50.0),
+                    capacity_variation_pct=data.get("variation_pct", 2.0),
+                    enable_thermal=data.get("enable_thermal_coupling", True),
+                )
+                pack = BatteryPack(pack_cfg)
+                set_pack(pack)
+
+                await websocket.send_json({
+                    "type": "pack_configured",
+                    "n_series": pack_cfg.n_series,
+                    "n_parallel": pack_cfg.n_parallel,
+                    "n_cells": pack.n_cells,
+                    "cells": _convert_numpy(pack.get_cell_summary()),
                 })
 
     except WebSocketDisconnect:

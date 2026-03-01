@@ -6,6 +6,8 @@
  *   - Center: 3D scene (top) + Charts (bottom)
  *   - Right panel: Real-time status metrics
  *   - Error boundaries to prevent blank screen on crash
+ *   - Theme toggle (dark/light)
+ *   - Keyboard shortcuts
  */
 
 import { Component, type ReactNode } from 'react';
@@ -13,7 +15,11 @@ import Scene from './Scene';
 import Charts from './Charts';
 import Controls from './Controls';
 import StatusPanel from './StatusPanel';
+import NyquistPlot from './NyquistPlot';
+import DQDVChart from './DQDVChart';
 import { useBatteryStore } from '../hooks/useBatteryState';
+import { useTheme } from '../context/ThemeContext';
+import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 
 /** Error Boundary — catches React crashes and shows fallback instead of blank screen */
 class ErrorBoundary extends Component<
@@ -60,19 +66,33 @@ class ErrorBoundary extends Component<
 export default function Dashboard() {
   const selectedView = useBatteryStore((s) => s.selectedView);
   const setSelectedView = useBatteryStore((s) => s.setSelectedView);
+  const { theme, toggleTheme } = useTheme();
+
+  // Activate keyboard shortcuts (Space, R, +/-, Esc)
+  useKeyboardShortcuts();
 
   return (
     <div className="w-screen h-screen flex bg-panel-bg text-panel-text overflow-hidden">
       {/* ─── Left Panel: Controls ────────────────────────────────── */}
       <aside className="w-64 shrink-0 bg-panel-surface border-r border-panel-border flex flex-col">
-        <div className="p-3 border-b border-panel-border">
-          <h1 className="text-sm font-bold text-white flex items-center gap-2">
-            <span className="text-lg">🔋</span>
-            Battery Digital Twin
-          </h1>
-          <p className="text-[10px] text-panel-muted mt-0.5">
-            3D Li-ion Simulation Engine
-          </p>
+        <div className="p-3 border-b border-panel-border flex items-center justify-between">
+          <div>
+            <h1 className="text-sm font-bold text-white flex items-center gap-2">
+              <span className="text-lg">🔋</span>
+              Battery Digital Twin
+            </h1>
+            <p className="text-[10px] text-panel-muted mt-0.5">
+              3D Li-ion Simulation Engine
+            </p>
+          </div>
+          {/* Theme toggle */}
+          <button
+            onClick={toggleTheme}
+            className="p-1.5 rounded-lg bg-panel-bg hover:bg-panel-border transition-colors text-sm"
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+          >
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
         </div>
         <div className="flex-1 overflow-y-auto">
           <Controls />
@@ -98,6 +118,19 @@ export default function Dashboard() {
             active={selectedView === 'split'}
             onClick={() => setSelectedView('split')}
           />
+          <ViewButton
+            label="Nyquist"
+            active={selectedView === 'nyquist' as any}
+            onClick={() => setSelectedView('nyquist' as any)}
+          />
+          <ViewButton
+            label="dQ/dV"
+            active={selectedView === 'dqdv' as any}
+            onClick={() => setSelectedView('dqdv' as any)}
+          />
+          <div className="ml-auto text-[9px] text-panel-muted hidden sm:block">
+            ⌨ Space·R·+/−·Esc
+          </div>
         </div>
 
         {/* Content area */}
@@ -131,6 +164,22 @@ export default function Dashboard() {
                 </ErrorBoundary>
               </div>
             </>
+          )}
+
+          {(selectedView as string) === 'nyquist' && (
+            <div className="flex-1 p-4">
+              <ErrorBoundary label="Nyquist Plot">
+                <NyquistPlot />
+              </ErrorBoundary>
+            </div>
+          )}
+
+          {(selectedView as string) === 'dqdv' && (
+            <div className="flex-1 p-4">
+              <ErrorBoundary label="dQ/dV Chart">
+                <DQDVChart />
+              </ErrorBoundary>
+            </div>
           )}
         </div>
       </main>

@@ -10,7 +10,7 @@
  *   - Pulsing/breathing animation to show simulation is active
  */
 
-import { useRef, useMemo } from 'react';
+import { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useBatteryStore } from '../hooks/useBatteryState';
@@ -36,8 +36,19 @@ export default function BatteryCell3D({ position = [0, 0, 0] }: Props) {
   const pulseRef = useRef<THREE.Mesh>(null);
   const seiRef = useRef<THREE.Mesh>(null);
   const seiMatRef = useRef<THREE.MeshStandardMaterial>(null);
+  const heatmapRef = useRef<THREE.Mesh>(null);
 
   const batteryState = useBatteryStore((s) => s.batteryState);
+
+  // Thermal heatmap canvas texture
+  const heatmapTexture = useMemo(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 128;
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    return tex;
+  }, []);
 
   // Cell dimensions (prismatic)
   const cellW = 0.091 * SCALE; // width
@@ -166,6 +177,30 @@ export default function BatteryCell3D({ position = [0, 0, 0] }: Props) {
       seiRef.current.scale.set(growFactor, growFactor, growFactor);
       // opacity: fades in as loss grows (0 → 0.45)
       seiMatRef.current.opacity = Math.min(seiLoss * 0.09, 0.45);
+    }
+
+    // Thermal heatmap texture — paint gradient from core (hot) to surface (cool)
+    if (heatmapTexture) {
+      const canvas = heatmapTexture.image as HTMLCanvasElement;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        const coreTemp = batteryState?.thermal_T_core_c ?? 25;
+        const surfTemp = batteryState?.thermal_T_surface_c ?? 25;
+        const ambTemp = 25;
+        const range = 40; // normalise 25..65 °C
+        const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        // top = surface, center = core, bottom = surface
+        const tSurf = Math.min((surfTemp - ambTemp) / range, 1);
+        const tCore = Math.min((coreTemp - ambTemp) / range, 1);
+        const surfHex = `hsl(${(1 - tSurf) * 240}, 90%, 50%)`;
+        const coreHex = `hsl(${(1 - tCore) * 240}, 90%, 50%)`;
+        grad.addColorStop(0, surfHex);
+        grad.addColorStop(0.5, coreHex);
+        grad.addColorStop(1, surfHex);
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        heatmapTexture.needsUpdate = true;
+      }
     }
   });
 
@@ -305,6 +340,19 @@ export default function BatteryCell3D({ position = [0, 0, 0] }: Props) {
           />
         </mesh>
       )}
+
+      {/* ── Thermal Heatmap Overlay ─────────────────────────────── */}
+      <mesh ref={heatmapRef}>
+        <boxGeometry args={[cellW * 1.005, cellH * 1.005, cellD * 1.005]} />
+        <meshStandardMaterial
+          map={heatmapTexture}
+          transparent
+          opacity={0.35}
+          roughness={1}
+          side={THREE.FrontSide}
+          depthWrite={false}
+        />
+      </mesh>
     </group>
   );
 }

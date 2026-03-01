@@ -248,3 +248,34 @@ class EquivalentCircuitModel:
             "current": current,
             **losses,
         }
+
+    def impedance_spectrum(self, frequencies: Optional[np.ndarray] = None,
+                           T: float = 298.15) -> dict:
+        """
+        Compute complex impedance Z(f) for the 2RC Thevenin model.
+
+        Z(jw) = R0 + R1/(1 + jw*R1*C1) + R2/(1 + jw*R2*C2)
+
+        Args:
+            frequencies: Array of frequencies [Hz]. Defaults to 0.001–10 000 Hz.
+            T: Temperature [K] for Arrhenius-adjusted resistances.
+
+        Returns:
+            dict with ``frequencies``, ``Z_real``, ``Z_imag`` (all lists).
+        """
+        if frequencies is None:
+            frequencies = np.logspace(-3, 4, 300)
+
+        omega = 2.0 * np.pi * frequencies
+        R0, R1, R2 = self.get_resistances(T)
+        C1, C2 = self.params.C1_ref, self.params.C2_ref
+
+        Z = (R0
+             + R1 / (1.0 + 1j * omega * R1 * C1)
+             + R2 / (1.0 + 1j * omega * R2 * C2))
+
+        return {
+            "frequencies": frequencies.tolist(),
+            "Z_real": Z.real.tolist(),
+            "Z_imag": (-Z.imag).tolist(),   # convention: plot -Im(Z)
+        }

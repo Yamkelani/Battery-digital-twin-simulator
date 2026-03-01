@@ -135,6 +135,15 @@ export type WSAction =
       enable_degradation?: boolean;
       enable_electrochemical?: boolean;
       degradation_acceleration?: number;
+    }
+  | {
+      action: 'configure_pack';
+      n_series?: number;
+      n_parallel?: number;
+      capacity_ah?: number;
+      variation_pct?: number;
+      enable_balancing?: boolean;
+      enable_thermal_coupling?: boolean;
     };
 
 // ─── Chart Data ────────────────────────────────────────────────────────────
