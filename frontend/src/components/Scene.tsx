@@ -20,8 +20,7 @@ import ParticleFlow from './ParticleFlow';
 import HeatMap from './HeatMap';
 import PackView3D from './PackView3D';
 import { useBatteryStore } from '../hooks/useBatteryState';
-
-const API_BASE = 'http://localhost:8001/api';
+import { API_BASE } from '../config';
 
 /** Simple grid floor using plain Three.js */
 function GridFloor() {

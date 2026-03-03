@@ -12,8 +12,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useBatteryStore } from './useBatteryState';
 import type { BatteryState, WSAction } from '../types/battery';
-
-const WS_URL = `ws://${window.location.hostname}:8001/ws/simulation`;
+import { WS_URL } from '../config';
 const RECONNECT_DELAY = 2000;
 
 export function useSimulation() {

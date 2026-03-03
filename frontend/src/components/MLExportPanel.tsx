@@ -6,8 +6,7 @@
  */
 
 import { useState, useCallback } from 'react';
-
-const API_BASE = 'http://localhost:8001/api';
+import { API_BASE } from '../config';
 
 interface MLConfig {
   num_cycles: number;

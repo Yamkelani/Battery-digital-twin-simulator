@@ -33,8 +33,7 @@ import type { RULPrediction } from '../types/battery';
 
 // Workaround for Recharts v2 type issue with React 18
 const ReferenceLine = _ReferenceLine as any;
-
-const API_BASE = 'http://localhost:8001/api';
+import { API_BASE } from '../config';
 
 /* ── Helper ────────────────────────────────────────────────── */
 

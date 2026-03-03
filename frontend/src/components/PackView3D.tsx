@@ -15,8 +15,7 @@ import * as THREE from 'three';
 import { type CellStateOverride } from './BatteryCell3D';
 import { useBatteryStore } from '../hooks/useBatteryState';
 import { socToColor, tempToColor } from '../utils/colors';
-
-const API_BASE = 'http://localhost:8001/api';
+import { API_BASE } from '../config';
 
 /* ────── Data interfaces ───────────────────────────────────────── */
 

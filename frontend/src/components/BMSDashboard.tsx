@@ -9,8 +9,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useBatteryStore } from '../hooks/useBatteryState';
-
-const API = 'http://localhost:8001/api';
+import { API_BASE } from '../config';
 
 /* ── Types ─────────────────────────────────────────────────── */
 interface CellInfo {
@@ -687,7 +686,7 @@ export default function BMSDashboard() {
 
   const fetchCells = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/pack/status`);
+      const r = await fetch(`${API_BASE}/pack/status`);
       if (!r.ok) return;
       const j = await r.json();
       if (j.status === 'ok') { setCells(j.cells ?? []); setNSeries(j.n_series ?? 0); setNParallel(j.n_parallel ?? 0); }

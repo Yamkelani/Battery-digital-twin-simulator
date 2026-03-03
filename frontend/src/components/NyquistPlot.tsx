@@ -16,8 +16,7 @@ import {
   ResponsiveContainer,
   Label,
 } from 'recharts';
-
-const API_BASE = 'http://localhost:8001/api';
+import { API_BASE } from '../config';
 
 interface EISPoint {
   re: number;

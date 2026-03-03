@@ -27,7 +27,14 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:8001",
+        "file://",   # Electron production
+        "*",         # Allow all for desktop app
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -67,7 +74,7 @@ async def startup():
     engine.set_profile("constant_discharge", c_rate=0.5)
 
     set_engine(engine)
-    print("🔋 Battery Digital Twin backend started")
+    print("[Battery DT] Backend started")
     print(f"   Cell: {cell_config.cell_id} | {cell_config.chemistry}")
     print(f"   Capacity: {cell_config.nominal_capacity_ah}Ah | Voltage: {cell_config.nominal_voltage_v}V")
 
