@@ -110,6 +110,20 @@ export function useSimulation() {
             useBatteryStore.getState().setBmsStatus(state.bms);
           }
 
+          // Extract pack cell data if present (streamed with each frame)
+          if (data.pack_cells && Array.isArray(data.pack_cells)) {
+            const { setPackCellStates, packConfigured, setPackConfig } = useBatteryStore.getState();
+            setPackCellStates(data.pack_cells, data.pack_thermal_links ?? []);
+            // Auto-set pack config if not already set
+            if (!packConfigured && data.pack_n_cells > 1) {
+              setPackConfig(
+                data.pack_n_series ?? 1,
+                data.pack_n_parallel ?? 1,
+                data.pack_n_cells ?? 1,
+              );
+            }
+          }
+
           // Add to chart history (every Nth frame to limit memory)
           frameCounter.current++;
           if (frameCounter.current % 2 === 0) {
@@ -146,12 +160,24 @@ export function useSimulation() {
   const start = useCallback(() => send({ action: 'start' }), [send]);
   const pause = useCallback(() => send({ action: 'pause' }), [send]);
   const resume = useCallback(() => send({ action: 'resume' }), [send]);
-  const stop = useCallback(() => send({ action: 'stop' }), [send]);
+  const stop = useCallback(() => {
+    send({ action: 'stop' });
+    // Optimistic update — immediately reflect idle in the UI
+    setStatus('idle');
+  }, [send, setStatus]);
 
   const reset = useCallback(
     (soc = 0.8, tempC = 25, resetDeg = false) => {
       clearHistory();
       frameCounter.current = 0;
+      // Optimistic: clear stale data and show idle before server confirms
+      setStatus('idle');
+      setBatteryState(null as unknown as import('../types/battery').BatteryState);
+      // Clear pack cell states, BMS, and focused cell so the UI fully resets
+      const { clearPackCellStates, clearFocusedCell, setBmsStatus } = useBatteryStore.getState();
+      clearPackCellStates();
+      clearFocusedCell();
+      setBmsStatus(null as any);
       send({
         action: 'reset',
         soc,
@@ -159,7 +185,7 @@ export function useSimulation() {
         reset_degradation: resetDeg,
       });
     },
-    [send, clearHistory],
+    [send, clearHistory, setStatus, setBatteryState],
   );
 
   const setSimSpeed = useCallback(

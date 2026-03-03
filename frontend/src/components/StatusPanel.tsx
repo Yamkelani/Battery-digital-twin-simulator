@@ -90,6 +90,8 @@ function SOCGauge({ soc }: { soc: number }) {
 export default function StatusPanel() {
   const bs = useBatteryStore((s) => s.batteryState);
   const status = useBatteryStore((s) => s.status);
+  const packConfigured = useBatteryStore((s) => s.packConfigured);
+  const packCellStates = useBatteryStore((s) => s.packCellStates);
 
   if (!bs) {
     return (
@@ -126,6 +128,29 @@ export default function StatusPanel() {
     <div className="p-2 space-y-2 overflow-y-auto max-h-full text-panel-text">
       {/* SOC Gauge */}
       <SOCGauge soc={soc} />
+
+      {/* Pack Summary (only when multi-cell pack is active) */}
+      {packConfigured && packCellStates && packCellStates.length > 1 && (() => {
+        const cells = packCellStates as any[];
+        const avgSoc = cells.reduce((s: number, c: any) => s + c.soc, 0) / cells.length;
+        const avgSoh = cells.reduce((s: number, c: any) => s + c.soh_pct, 0) / cells.length;
+        const maxTemp = Math.max(...cells.map((c: any) => c.temp_c));
+        const minSoh = Math.min(...cells.map((c: any) => c.soh_pct));
+        const socSpread = Math.max(...cells.map((c: any) => c.soc)) - Math.min(...cells.map((c: any) => c.soc));
+        return (
+          <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-lg p-2">
+            <div className="text-[10px] text-indigo-400 uppercase tracking-wider mb-1">
+              Pack ({cells.length} cells)
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              <MetricCard label="Avg SOC" value={(avgSoc * 100).toFixed(1)} unit="%" color={socToColor(avgSoc)} subtext={`Spread: ${(socSpread * 100).toFixed(2)}%`} />
+              <MetricCard label="Avg SOH" value={avgSoh.toFixed(1)} unit="%" color={sohToColor(avgSoh)} subtext={`Min: ${minSoh.toFixed(1)}%`} />
+              <MetricCard label="Max Temp" value={maxTemp.toFixed(1)} unit="°C" color={tempToColor(maxTemp)} />
+              <MetricCard label="Pack V" value={(bs as any).pack_voltage?.toFixed(2) ?? '—'} unit="V" color="#a78bfa" />
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Electrical */}
       <div className="grid grid-cols-2 gap-1.5">

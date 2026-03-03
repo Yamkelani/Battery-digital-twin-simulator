@@ -20,6 +20,7 @@ import NyquistPlot from './NyquistPlot';
 import DQDVChart from './DQDVChart';
 import CCCVChart from './CCCVChart';
 import RULPanel from './RULPanel';
+import MLExportPanel from './MLExportPanel';
 import { useBatteryStore } from '../hooks/useBatteryState';
 import { useTheme } from '../context/ThemeContext';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -104,57 +105,24 @@ export default function Dashboard() {
 
       {/* ─── Center: 3D Scene + Charts ──────────────────────────── */}
       <main className="flex-1 flex flex-col min-w-0">
-        {/* View toggle */}
-        <div className="flex items-center gap-1 p-1.5 bg-panel-surface border-b border-panel-border">
-          <ViewButton
-            label="3D View"
-            active={selectedView === '3d'}
-            onClick={() => setSelectedView('3d')}
-          />
-          <ViewButton
-            label="Charts"
-            active={selectedView === 'charts'}
-            onClick={() => setSelectedView('charts')}
-          />
-          <ViewButton
-            label="Split"
-            active={selectedView === 'split'}
-            onClick={() => setSelectedView('split')}
-          />
-          <ViewButton
-            label="Nyquist"
-            active={selectedView === 'nyquist' as any}
-            onClick={() => setSelectedView('nyquist' as any)}
-          />
-          <ViewButton
-            label="dQ/dV"
-            active={selectedView === 'dqdv' as any}
-            onClick={() => setSelectedView('dqdv' as any)}
-          />
-          <ViewButton
-            label="BMS"
-            active={selectedView === 'bms' as any}
-            onClick={() => setSelectedView('bms' as any)}
-          />
-          <ViewButton
-            label="CC-CV"
-            active={selectedView === 'cccv' as any}
-            onClick={() => setSelectedView('cccv' as any)}
-          />
-          <ViewButton
-            label="RUL"
-            active={selectedView === 'rul' as any}
-            onClick={() => setSelectedView('rul' as any)}
-          />
-          <div className="ml-auto text-[9px] text-panel-muted hidden sm:block">
-            ⌨ Space·R·+/−·Esc
-          </div>
+        {/* View toggle — wraps on narrow screens */}
+        <div className="flex flex-wrap items-center gap-1 p-1.5 bg-panel-surface border-b border-panel-border">
+          <ViewButton label="3D"     active={selectedView === '3d'}      onClick={() => setSelectedView('3d')} />
+          <ViewButton label="Charts" active={selectedView === 'charts'}  onClick={() => setSelectedView('charts')} />
+          <ViewButton label="Split"  active={selectedView === 'split'}   onClick={() => setSelectedView('split')} />
+          <ViewButton label="Nyquist" active={(selectedView as string) === 'nyquist'} onClick={() => setSelectedView('nyquist')} />
+          <ViewButton label="dQ/dV"  active={(selectedView as string) === 'dqdv'}    onClick={() => setSelectedView('dqdv')} />
+          <ViewButton label="BMS"    active={(selectedView as string) === 'bms'}     onClick={() => setSelectedView('bms')} />
+          <ViewButton label="CC-CV"  active={(selectedView as string) === 'cccv'}    onClick={() => setSelectedView('cccv')} />
+          <ViewButton label="RUL"    active={(selectedView as string) === 'rul'}     onClick={() => setSelectedView('rul')} />
+          <ViewButton label="ML Data" active={(selectedView as string) === 'ml-data'} onClick={() => setSelectedView('ml-data')} />
+          <span className="ml-auto text-[9px] text-panel-muted hidden sm:block">⌨ Space·R·+/−·Esc</span>
         </div>
 
         {/* Content area */}
         <div className="flex-1 flex flex-col min-h-0">
           {selectedView === '3d' && (
-            <div className="flex-1">
+            <div className="flex-1 relative">
               <ErrorBoundary label="3D Scene">
                 <Scene />
               </ErrorBoundary>
@@ -170,18 +138,18 @@ export default function Dashboard() {
           )}
 
           {selectedView === 'split' && (
-            <>
-              <div className="flex-1 min-h-0" style={{ flex: '1.2' }}>
+            <div className="flex-1 flex flex-col min-h-0">
+              <div className="relative" style={{ flex: '1.2 1 0%', minHeight: 0, overflow: 'hidden' }}>
                 <ErrorBoundary label="3D Scene">
                   <Scene />
                 </ErrorBoundary>
               </div>
-              <div className="border-t border-panel-border" style={{ flex: '0.8', minHeight: 300 }}>
+              <div className="border-t border-panel-border overflow-y-auto" style={{ flex: '0.8 1 0%', minHeight: 120 }}>
                 <ErrorBoundary label="Charts">
                   <Charts />
                 </ErrorBoundary>
               </div>
-            </>
+            </div>
           )}
 
           {(selectedView as string) === 'nyquist' && (
@@ -201,7 +169,7 @@ export default function Dashboard() {
           )}
 
           {(selectedView as string) === 'bms' && (
-            <div className="flex-1">
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
               <ErrorBoundary label="BMS Dashboard">
                 <BMSDashboard />
               </ErrorBoundary>
@@ -217,9 +185,17 @@ export default function Dashboard() {
           )}
 
           {(selectedView as string) === 'rul' && (
-            <div className="flex-1">
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
               <ErrorBoundary label="RUL Analytics">
                 <RULPanel />
+              </ErrorBoundary>
+            </div>
+          )}
+
+          {(selectedView as string) === 'ml-data' && (
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <ErrorBoundary label="ML Dataset">
+                <MLExportPanel />
               </ErrorBoundary>
             </div>
           )}
@@ -255,7 +231,7 @@ function ViewButton({
   return (
     <button
       onClick={onClick}
-      className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+      className={`px-2 py-1 rounded text-[11px] font-medium transition-colors whitespace-nowrap ${
         active
           ? 'bg-blue-600 text-white'
           : 'bg-panel-bg text-panel-muted hover:text-panel-text'

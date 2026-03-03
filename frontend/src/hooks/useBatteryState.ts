@@ -33,8 +33,8 @@ interface BatteryStore {
   // UI state
   showDashboard: boolean;
   toggleDashboard: () => void;
-  selectedView: '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv' | 'bms' | 'cccv' | 'rul';
-  setSelectedView: (v: '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv' | 'bms' | 'cccv' | 'rul') => void;
+  selectedView: '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv' | 'bms' | 'cccv' | 'rul' | 'ml-data';
+  setSelectedView: (v: '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv' | 'bms' | 'cccv' | 'rul' | 'ml-data') => void;
 
   // Simulation speed
   speed: number;
@@ -47,6 +47,12 @@ interface BatteryStore {
   packParallel: number;
   setPackConfig: (n_series: number, n_parallel: number, n_cells: number) => void;
   clearPack: () => void;
+
+  // Live pack cell data (from WebSocket)
+  packCellStates: any[] | null;
+  packThermalLinks: any[] | null;
+  setPackCellStates: (cells: any[], links: any[]) => void;
+  clearPackCellStates: () => void;
 
   // Focused cell (click-to-zoom in pack view)
   focusedCellId: string | null;
@@ -121,7 +127,13 @@ export const useBatteryStore = create<BatteryStore>((set, get) => ({
   setPackConfig: (packSeries, packParallel, packCells) =>
     set({ packConfigured: true, packSeries, packParallel, packCells }),
   clearPack: () =>
-    set({ packConfigured: false, packCells: 0, packSeries: 1, packParallel: 1 }),
+    set({ packConfigured: false, packCells: 0, packSeries: 1, packParallel: 1, packCellStates: null, packThermalLinks: null }),
+
+  // Live pack cell data
+  packCellStates: null,
+  packThermalLinks: null,
+  setPackCellStates: (cells, links) => set({ packCellStates: cells, packThermalLinks: links }),
+  clearPackCellStates: () => set({ packCellStates: null, packThermalLinks: null }),
 
   // Focused cell
   focusedCellId: null,

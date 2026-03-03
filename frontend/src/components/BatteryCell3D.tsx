@@ -26,9 +26,16 @@ const SCALE = 20;
 export interface CellStateOverride {
   soc: number;
   tempC: number;
+  tempSurfaceC?: number;
   soh: number;
   seiLoss: number;
+  platingLoss: number;
   current: number;
+  isEdge?: boolean;
+  heatW?: number;
+  resistanceFactor?: number;
+  cycleLoss?: number;
+  heatGenW?: number;
 }
 
 interface Props {
@@ -53,6 +60,9 @@ export default function BatteryCell3D({ position = [0, 0, 0], cellState, staticP
   const seiRef = useRef<THREE.Mesh>(null);
   const seiMatRef = useRef<THREE.MeshStandardMaterial>(null);
   const heatmapRef = useRef<THREE.Mesh>(null);
+  const heatmapMatRef = useRef<THREE.MeshStandardMaterial>(null);
+  const platingRef = useRef<THREE.Mesh>(null);
+  const platingMatRef = useRef<THREE.MeshStandardMaterial>(null);
 
   const batteryState = useBatteryStore((s) => s.batteryState);
   const cutawayMode = useBatteryStore((s) => s.cutawayMode);
@@ -77,29 +87,43 @@ export default function BatteryCell3D({ position = [0, 0, 0], cellState, staticP
   const tempC = cellState?.tempC ?? batteryState?.thermal_T_core_c ?? 25;
   const soh = cellState?.soh ?? batteryState?.deg_soh_pct ?? 100;
   const seiLoss = cellState?.seiLoss ?? batteryState?.deg_sei_loss_pct ?? 0;
+  const platingLoss = cellState?.platingLoss ?? batteryState?.deg_plating_loss_pct ?? 0;
   const current = cellState?.current ?? batteryState?.current ?? 0;
+  const resistanceFactor = cellState?.resistanceFactor ?? batteryState?.deg_resistance_factor ?? 1.0;
+  const cycleLoss = cellState?.cycleLoss ?? batteryState?.deg_cycle_loss_pct ?? 0;
+  const heatGenW = cellState?.heatGenW ?? batteryState?.heat_total_w ?? 0;
   const isCharging = current < 0;
   const isDischarging = current > 0;
+
+  // ── Visual amplification: non-linear mapping so small degradation values ──
+  // ── are still visible. A digital-twin demo must show *what* happens even ──
+  // ── if absolute magnitudes are scaled for visibility.                    ──
+  const seiVisual = Math.min(Math.pow(Math.max(seiLoss / 3, 0), 0.55), 1.0);
+  const platingVisual = Math.min(Math.pow(Math.max(platingLoss / 0.5, 0), 0.5), 1.0);
+  const cycleVisual = Math.min(Math.pow(Math.max(cycleLoss / 2, 0), 0.5), 1.0);
+  const resistVisual = Math.min((resistanceFactor - 1.0) * 3, 1.0);
 
   // Colors
   const socColor = useMemo(() => new THREE.Color(socToColor(soc)), [soc]);
   const tempColor = useMemo(() => new THREE.Color(tempToColor(tempC)), [tempC]);
   const sohColor = useMemo(() => new THREE.Color(sohToColor(soh)), [soh]);
 
-  // Shell material — blends SOC color with temperature
+  // Shell material — blends SOC color with temperature, darkened by degradation
+  const totalDeg = Math.min(seiVisual * 0.5 + platingVisual * 0.3 + cycleVisual * 0.2, 1.0);
   const shellMaterial = useMemo(() => {
     const baseColor = socColor.clone().lerp(tempColor, 0.3);
+    baseColor.multiplyScalar(1.0 - totalDeg * 0.3);
     return new THREE.MeshStandardMaterial({
       color: baseColor,
-      metalness: 0.4,
-      roughness: 0.3,
+      metalness: Math.max(0.4 - totalDeg * 0.2, 0.1),
+      roughness: Math.min(0.3 + totalDeg * 0.4, 0.8),
       transparent: true,
       opacity: cutawayMode ? 0.08 : 0.85,
       side: THREE.DoubleSide,
       clippingPlanes: cutawayMode ? [CUTAWAY_PLANE] : [],
       clipShadows: true,
     });
-  }, [socColor, tempColor, cutawayMode]);
+  }, [socColor, tempColor, cutawayMode, totalDeg]);
 
   // Internal layer materials
   const anodeMaterial = useMemo(
@@ -151,8 +175,10 @@ export default function BatteryCell3D({ position = [0, 0, 0], cellState, staticP
     [cutawayMode],
   );
 
-  // SOC fill level (animated internal indicator)
-  const fillHeight = useMemo(() => cellH * soc * 0.85, [soc, cellH]);
+  // SOC fill level — adjusted for capacity degradation (SOH)
+  // Fill represents actual usable energy: degraded cells hold less charge
+  const effectiveCapacity = soh / 100;
+  const fillHeight = useMemo(() => cellH * soc * effectiveCapacity * 0.85, [soc, effectiveCapacity, cellH]);
 
   // Animate — breathing, floating, glow, rotation
   useFrame((_state: any, delta: number) => {
@@ -168,27 +194,44 @@ export default function BatteryCell3D({ position = [0, 0, 0], cellState, staticP
       groupRef.current.rotation.y = Math.sin(t * 0.4) * 0.15;
     }
 
-    // Breathing scale based on current activity
+    // Breathing scale based on current activity + subtle swelling from gas generation
     const activity = Math.min(Math.abs(current) / 20, 1);
-    const breathe = 1 + Math.sin(t * 3) * 0.01 * (1 + activity * 2);
+    const gasSwelling = 1 + seiVisual * 0.015; // subtle internal gas build-up
+    const breathe = gasSwelling + Math.sin(t * 3) * 0.01 * (1 + activity * 2);
     groupRef.current.scale.setScalar(breathe);
 
-    // Heat glow intensity based on temperature
+    // Heat glow intensity — driven by actual heat generation, not just temp
     if (heatGlowRef.current) {
-      const heatIntensity = Math.max(0, (tempC - 25) / 35) * 2;
+      const heatFromTemp = Math.max(0, (tempC - 25) / 35) * 2;
+      const heatFromGen = Math.min(heatGenW / 5, 2); // heat generation power
+      const heatIntensity = Math.max(heatFromTemp, heatFromGen);
       heatGlowRef.current.intensity = heatIntensity + Math.sin(t * 4) * 0.2;
+      // Color shifts: low heat = orange, high heat = bright red
+      const heatRatio = Math.min(heatIntensity / 3, 1);
+      heatGlowRef.current.color.setRGB(1, 0.3 * (1 - heatRatio), 0);
     }
 
-    // Terminal glow pulsing based on current
+    // ── Terminal glow — degraded by resistance growth ──
+    // Fresh terminals: bright pulsing glow. Aged: dull, dark, high-resistance.
     const terminalEmissive = Math.min(Math.abs(current) / 50, 1);
     const pulse = 0.5 + Math.sin(t * 6) * 0.5;
+    const termFreshness = Math.max(1.0 - resistVisual, 0.15); // clamp so never fully dead
     if (terminalPosRef.current) {
       const mat = terminalPosRef.current.material as THREE.MeshStandardMaterial;
-      mat.emissiveIntensity = terminalEmissive * pulse * 0.8;
+      mat.emissiveIntensity = terminalEmissive * pulse * 0.8 * termFreshness;
+      mat.metalness = Math.max(0.8 - resistVisual * 0.5, 0.2);
+      mat.roughness = Math.min(0.2 + resistVisual * 0.5, 0.7);
+      // Color darkens as resistance grows (corrosion/oxidation)
+      const rFade = 1 - resistVisual * 0.4;
+      mat.color.setRGB(0.8 * rFade, 0.2 * rFade, 0.2 * rFade);
     }
     if (terminalNegRef.current) {
       const mat = terminalNegRef.current.material as THREE.MeshStandardMaterial;
-      mat.emissiveIntensity = terminalEmissive * pulse * 0.8;
+      mat.emissiveIntensity = terminalEmissive * pulse * 0.8 * termFreshness;
+      mat.metalness = Math.max(0.8 - resistVisual * 0.5, 0.2);
+      mat.roughness = Math.min(0.2 + resistVisual * 0.5, 0.7);
+      const rFade = 1 - resistVisual * 0.4;
+      mat.color.setRGB(0.2 * rFade, 0.2 * rFade, 0.8 * rFade);
     }
 
     // Pulse overlay (energy ring)
@@ -198,32 +241,66 @@ export default function BatteryCell3D({ position = [0, 0, 0], cellState, staticP
       pulseRef.current.scale.setScalar(1 + Math.sin(t * 3) * 0.03);
     }
 
-    // SOC fill height animation (smooth)
+    // SOC fill height animation (smooth) — accounts for capacity degradation
     if (fillRef.current) {
       const targetY = -cellH / 2 + fillHeight / 2 + cellH * 0.05;
       fillRef.current.position.y += (targetY - fillRef.current.position.y) * delta * 3;
       fillRef.current.scale.y = fillHeight > 0.01 ? 1 : 0;
     }
 
-    // SEI layer accumulation — grows thicker as sei_loss increases
+    // ── SEI layer — amplified visual: amber crust that darkens to brown ──
+    // Uses seiVisual (non-linear amplification) so even small loss is visible
     if (seiRef.current && seiMatRef.current) {
-      // Amplify sei_loss for visibility: boost small values so even 0.01% shows
-      const amplified = seiLoss > 0 ? Math.max(seiLoss, 0.3) + seiLoss * 8 : 0;
-      const growFactor = 1 + amplified * 0.016;
+      const growFactor = 1 + seiVisual * 0.25; // up to +25% shell expansion
       seiRef.current.scale.set(growFactor, growFactor, growFactor);
-      // opacity: always at least ~0.06 when any loss is present
-      seiMatRef.current.opacity = amplified > 0
-        ? Math.min(0.06 + amplified * 0.08, 0.5)
+      seiMatRef.current.opacity = seiVisual > 0.005
+        ? Math.min(0.08 + seiVisual * 0.55, 0.65)
         : 0;
+      // Color progression: fresh amber → dark crusty brown as SEI thickens
+      const r = 0.82 - seiVisual * 0.45; // 0.82 → 0.37
+      const g = 0.60 - seiVisual * 0.37; // 0.60 → 0.23
+      const b = 0.12 - seiVisual * 0.05; // 0.12 → 0.07
+      seiMatRef.current.color.setRGB(r, g, b);
+      seiMatRef.current.emissive.setRGB(r * 0.6, g * 0.5, b * 0.3);
+      seiMatRef.current.emissiveIntensity = 0.1 + seiVisual * 0.4
+        + (seiVisual > 0.01 ? Math.sin(t * 1.2) * 0.05 * seiVisual : 0); // subtle pulse = active growth
+      // Surface gets rougher/crustier as SEI builds
+      seiMatRef.current.roughness = 0.5 + seiVisual * 0.5;
+      seiMatRef.current.metalness = Math.max(0.1 - seiVisual * 0.1, 0);
     }
 
-    // Thermal heatmap texture — paint gradient from core (hot) to surface (cool)
+    // ── Lithium plating — amplified visual: silver metallic deposit on anode ──
+    if (platingRef.current && platingMatRef.current) {
+      if (platingVisual > 0.005) {
+        platingRef.current.visible = true;
+        // Thickness grows substantially with plating
+        const thickness = 0.4 + platingVisual * 2.0;
+        platingRef.current.scale.z = thickness;
+        platingRef.current.scale.x = 1 + platingVisual * 0.1;
+        platingRef.current.scale.y = 1 + platingVisual * 0.05;
+        // Colour: bright silver → dull grey as dendrites form
+        const grey = 0.85 - platingVisual * 0.35;
+        platingMatRef.current.color.setRGB(grey, grey, grey * 1.05);
+        platingMatRef.current.opacity = 0.3 + platingVisual * 0.55;
+        // Crystalline flash/shimmer at edges
+        platingMatRef.current.emissiveIntensity =
+          0.15 + platingVisual * 0.45 + Math.sin(t * 8 + platingVisual * 20) * 0.08;
+        platingMatRef.current.emissive.setRGB(0.5, 0.55, 0.6);
+        platingMatRef.current.metalness = 0.9 - platingVisual * 0.3;
+        platingMatRef.current.roughness = 0.1 + platingVisual * 0.4;
+      } else {
+        platingRef.current.visible = false;
+      }
+    }
+
+    // ── Thermal heatmap texture — uses cellState temps when available (pack mode) ──
     if (heatmapTexture) {
       const canvas = heatmapTexture.image as HTMLCanvasElement;
       const ctx = canvas.getContext('2d');
       if (ctx) {
-        const coreTemp = batteryState?.thermal_T_core_c ?? 25;
-        const surfTemp = batteryState?.thermal_T_surface_c ?? 25;
+        // Use cellState surface temp if available (pack/focused view), else global
+        const coreTemp = cellState?.tempC ?? batteryState?.thermal_T_core_c ?? 25;
+        const surfTemp = cellState?.tempSurfaceC ?? batteryState?.thermal_T_surface_c ?? 25;
         const ambTemp = 25;
         const range = 40; // normalise 25..65 °C
         const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
@@ -351,27 +428,51 @@ export default function BatteryCell3D({ position = [0, 0, 0], cellState, staticP
 
       {/* ── SEI Accumulation Layer (wraps entire cell, grows thicker) ── */}
       <mesh ref={seiRef}>
-        <boxGeometry args={[cellW * 1.01, cellH * 1.01, cellD * 1.01]} />
+        <boxGeometry args={[cellW * 1.03, cellH * 1.03, cellD * 1.03]} />
         <meshStandardMaterial
           ref={seiMatRef as any}
           color="#b8860b"
           transparent
           opacity={0}
-          roughness={0.9}
-          metalness={0.1}
+          roughness={0.85}
+          metalness={0.05}
+          emissive="#cd853f"
+          emissiveIntensity={0}
+          side={THREE.FrontSide}
+          depthWrite={false}
+        />
+      </mesh>
+
+      {/* ── Lithium Plating (silver/grey slab on anode face) ── */}
+      <mesh
+        ref={platingRef}
+        position={[0, 0, -(cellD * 0.55)]}
+        visible={false}
+      >
+        <boxGeometry args={[cellW * 0.84, cellH * 0.80, cellD * 0.15]} />
+        <meshStandardMaterial
+          ref={platingMatRef as any}
+          color="#c0c0c0"
+          transparent
+          opacity={0}
+          metalness={0.8}
+          roughness={0.2}
+          emissive="#8090a0"
+          emissiveIntensity={0}
           side={THREE.FrontSide}
           depthWrite={false}
         />
       </mesh>
 
       {/* ── SOH Degradation Tint (all-face overlay, becomes more visible) ── */}
-      {soh < 95 && (
+      {/* Triggers at 98% SOH using amplified visual so degradation is always visible */}
+      {soh < 98 && (
         <mesh>
           <boxGeometry args={[cellW * 1.02, cellH * 1.02, cellD * 1.02]} />
           <meshStandardMaterial
             color={sohColor}
             transparent
-            opacity={Math.min((100 - soh) / 120, 0.5)}
+            opacity={Math.min((100 - soh) / 60, 0.5)}
             roughness={1}
             side={THREE.FrontSide}
             depthWrite={false}
@@ -379,13 +480,28 @@ export default function BatteryCell3D({ position = [0, 0, 0], cellState, staticP
         </mesh>
       )}
 
-      {/* ── Thermal Heatmap Overlay ─────────────────────────────── */}
+      {/* ── Dead Capacity Indicator (dark region at top of fill) ── */}
+      {soh < 99.5 && (
+        <mesh position={[0, cellH / 2 - cellH * (1 - effectiveCapacity) * 0.85 / 2 - cellH * 0.02, 0]}>
+          <boxGeometry args={[cellW * 0.88, Math.max(cellH * (1 - effectiveCapacity) * 0.85, 0.01), cellD * 0.88]} />
+          <meshStandardMaterial
+            color="#1a1a1a"
+            transparent
+            opacity={Math.min((100 - soh) * 0.08, 0.5)}
+            roughness={1}
+            depthWrite={false}
+          />
+        </mesh>
+      )}
+
+      {/* ── Thermal Heatmap Overlay — opacity driven by heat generation ── */}
       <mesh ref={heatmapRef}>
         <boxGeometry args={[cellW * 1.005, cellH * 1.005, cellD * 1.005]} />
         <meshStandardMaterial
+          ref={heatmapMatRef as any}
           map={heatmapTexture}
           transparent
-          opacity={0.35}
+          opacity={Math.min(0.15 + Math.max(0, (tempC - 25) / 30) * 0.45, 0.65)}
           roughness={1}
           side={THREE.FrontSide}
           depthWrite={false}

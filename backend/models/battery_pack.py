@@ -41,7 +41,10 @@ class PackConfig:
     enable_thermal: bool = True
     enable_degradation: bool = True
     enable_electrochemical: bool = True
-    degradation_time_factor: float = 500.0  # Accelerated aging for visible effects
+    degradation_time_factor: float = 100.0  # Accelerated aging for visible effects
+
+    # Base convective heat transfer coefficient (stored for edge-cell scaling)
+    _base_h_conv: float = 10.0
 
 
 class BatteryPack:
@@ -96,6 +99,11 @@ class BatteryPack:
 
             self._cell_grid.append(string_cells)
 
+        # Store the base convective coefficient from cell thermal params
+        # so we can scale it for edge vs. interior cells
+        if self.cells:
+            c._base_h_conv = self.cells[0].config.thermal_params.h_conv_w_per_m2_k
+
         # Track pack-level time
         self.sim_time_s: float = 0.0
         self.step_count: int = 0
@@ -135,36 +143,124 @@ class BatteryPack:
 
     # ─── Thermal coupling ────────────────────────────────────────────────
 
-    def _apply_thermal_coupling(self, dt: float):
-        """Nearest-neighbour heat exchange between adjacent cells."""
-        G = self.config.inter_cell_thermal_conductance
+    def _compute_cell_position(self, cell) -> tuple:
+        """Return (string_idx, series_idx) for a cell in the grid."""
+        for pi, string in enumerate(self._cell_grid):
+            for si, c in enumerate(string):
+                if c is cell:
+                    return (pi, si)
+        return (0, 0)
 
-        # Within each string (series-adjacent coupling)
+    def _is_edge_cell(self, pi: int, si: int) -> bool:
+        """True if cell is on the boundary of the pack (more exposed surface)."""
+        n_strings = len(self._cell_grid)
+        n_series = len(self._cell_grid[0]) if n_strings > 0 else 0
+        return pi == 0 or pi == n_strings - 1 or si == 0 or si == n_series - 1
+
+    def _count_interior_faces(self, pi: int, si: int) -> int:
+        """Count how many of the cell's 4 lateral faces are adjacent to another cell."""
+        n_strings = len(self._cell_grid)
+        n_series = len(self._cell_grid[0]) if n_strings > 0 else 0
+        count = 0
+        if si > 0:
+            count += 1
+        if si < n_series - 1:
+            count += 1
+        if pi > 0:
+            count += 1
+        if pi < n_strings - 1:
+            count += 1
+        return count
+
+    def _apply_thermal_coupling(self, dt: float):
+        """
+        Physics-based inter-cell thermal coupling.
+
+        Uses surface-to-surface heat transfer (not core-to-core), because
+        in a real pack the outer casing of adjacent cells are in thermal
+        contact through cell holders, thermal pads, or air gaps.
+
+        Model:
+            Q_ij = G * (T_surface_i - T_surface_j)   [W]
+
+        The heat extracted from cell i's surface goes into cell j's surface
+        (and vice-versa), modifying the surface energy balance. This is
+        physically correct: surface temperature is what neighboring cells
+        "see", and cores are only indirectly affected via the cell's own
+        internal core↔surface conduction.
+
+        Edge cells have fewer neighbors → more exposed surface area →
+        enhanced ambient convection (h_conv scaled by exposed-face fraction).
+        """
+        G = self.config.inter_cell_thermal_conductance
+        n_strings = len(self._cell_grid)
+        n_series = len(self._cell_grid[0]) if n_strings > 0 else 0
+
+        # ── Track heat exchanged per link for visualization ───────────
+        if not hasattr(self, '_thermal_link_q'):
+            self._thermal_link_q = {}  # (id_a, id_b) → cumulative Q in this step
+
+        self._thermal_link_q.clear()
+
+        def exchange(cell_a, cell_b, conductance):
+            """Surface-to-surface heat exchange between two cells."""
+            T_surf_a = cell_a.thermal.T_surface
+            T_surf_b = cell_b.thermal.T_surface
+            Q = conductance * (T_surf_a - T_surf_b)  # W, positive = A→B
+
+            # Modify surface temperatures (energy balance on surface node)
+            m_s_a = cell_a.config.thermal_params.surface_mass_kg
+            cp_s_a = cell_a.config.thermal_params.surface_cp_j_per_kg_k
+            m_s_b = cell_b.config.thermal_params.surface_mass_kg
+            cp_s_b = cell_b.config.thermal_params.surface_cp_j_per_kg_k
+
+            dT_a = Q * dt / (m_s_a * cp_s_a)
+            dT_b = Q * dt / (m_s_b * cp_s_b)
+
+            cell_a.thermal._state[1] -= dT_a   # surface of A loses heat
+            cell_b.thermal._state[1] += dT_b   # surface of B gains heat
+
+            # Record for visualization
+            key = (cell_a.config.cell_id, cell_b.config.cell_id)
+            self._thermal_link_q[key] = float(Q)
+
+        # Within each string (series-adjacent coupling: full conductance)
         for string in self._cell_grid:
             for i in range(len(string) - 1):
-                T_a = string[i].thermal.T_core
-                T_b = string[i + 1].thermal.T_core
-                Q = G * (T_a - T_b)  # W
-                dT = Q * dt / (string[i].config.thermal_params.mass_kg *
-                               string[i].config.thermal_params.specific_heat_j_per_kg_k)
-                string[i].thermal._state[0] -= dT
-                string[i + 1].thermal._state[0] += dT
+                exchange(string[i], string[i + 1], G)
 
-        # Across parallel strings (same series index, weaker coupling)
-        n_strings = len(self._cell_grid)
+        # Across parallel strings (same series index: reduced conductance
+        # because cross-string contact area is typically smaller)
         if n_strings > 1:
-            for si in range(len(self._cell_grid[0])):
+            G_cross = G * 0.6  # weaker cross-string thermal coupling
+            for si in range(n_series):
                 for pi in range(n_strings - 1):
                     if si < len(self._cell_grid[pi]) and si < len(self._cell_grid[pi + 1]):
-                        ca = self._cell_grid[pi][si]
-                        cb = self._cell_grid[pi + 1][si]
-                        T_a = ca.thermal.T_core
-                        T_b = cb.thermal.T_core
-                        Q = G * 0.5 * (T_a - T_b)
-                        dT = Q * dt / (ca.config.thermal_params.mass_kg *
-                                       ca.config.thermal_params.specific_heat_j_per_kg_k)
-                        ca.thermal._state[0] -= dT
-                        cb.thermal._state[0] += dT
+                        exchange(self._cell_grid[pi][si],
+                                 self._cell_grid[pi + 1][si], G_cross)
+
+        # ── Edge-cell enhanced ambient cooling ────────────────────────
+        # In a real pack, interior cells are sandwiched between neighbors
+        # and have less direct airflow. Edge cells have exposed faces.
+        for pi in range(n_strings):
+            for si in range(n_series):
+                cell = self._cell_grid[pi][si]
+                interior_faces = self._count_interior_faces(pi, si)
+                exposed_faces = 4 - interior_faces  # of 4 lateral faces
+
+                if exposed_faces > 0:
+                    # Boost convective cooling proportional to exposed surface
+                    # Interior cell: 0 boost. Corner cell (2 exposed): ~0.3 boost
+                    boost_factor = 1.0 + 0.15 * exposed_faces
+                    # Temporarily increase h_conv for this cell's thermal step
+                    cell.thermal.params.h_conv_w_per_m2_k = (
+                        self.config._base_h_conv * boost_factor
+                    )
+                else:
+                    # Interior cells: slightly reduced convection (shielded)
+                    cell.thermal.params.h_conv_w_per_m2_k = (
+                        self.config._base_h_conv * 0.75
+                    )
 
     # ─── Aggregation helpers ─────────────────────────────────────────────
 
@@ -227,14 +323,27 @@ class BatteryPack:
     def get_cell_summary(self) -> List[Dict[str, Any]]:
         """Return per-cell snapshot (for the pack visualisation)."""
         summaries = []
+        n_strings = len(self._cell_grid)
+        n_series = len(self._cell_grid[0]) if n_strings > 0 else 0
+
         for cell in self.cells:
-            soh = (cell.degradation.capacity_retention * 100.0
+            deg = cell.degradation
+            soh = (deg.capacity_retention * 100.0
                    if cell.config.enable_degradation else 100.0)
-            sei_loss = (cell.degradation.sei_capacity_loss * 100.0
+            sei_loss = (deg.sei_capacity_loss * 100.0
                         if cell.config.enable_degradation else 0.0)
+            plating_loss = (deg.plating_capacity_loss * 100.0
+                            if cell.config.enable_degradation else 0.0)
+            cycle_loss = (deg.cycle_capacity_loss * 100.0
+                          if cell.config.enable_degradation else 0.0)
             # Approximate current from last step result
             current = getattr(cell, '_last_current', 0.0)
             heat_w = getattr(cell, '_last_heat_w', 0.0)
+
+            # Determine position for edge/interior classification
+            pi, si = self._compute_cell_position(cell)
+            is_edge = self._is_edge_cell(pi, si)
+
             summaries.append({
                 "cell_id": cell.config.cell_id,
                 "soc": cell.ecm.soc,
@@ -242,30 +351,64 @@ class BatteryPack:
                     cell.ecm.state, 0, cell.thermal.T_core
                 ),
                 "temp_c": cell.thermal.T_core - 273.15,
+                "temp_surface_c": cell.thermal.T_surface - 273.15,
+                "temp_gradient_c": (cell.thermal.T_core - cell.thermal.T_surface),
                 "soh_pct": soh,
                 "sei_loss_pct": sei_loss,
+                "plating_loss_pct": plating_loss,
+                "cycle_loss_pct": cycle_loss,
+                "resistance_factor": (
+                    deg.resistance_factor
+                    if cell.config.enable_degradation else 1.0
+                ),
                 "current": current,
                 "heat_w": heat_w,
                 "capacity_ah": cell.config.nominal_capacity_ah,
+                "is_edge_cell": is_edge,
+                "h_conv_effective": cell.thermal.params.h_conv_w_per_m2_k,
             })
         return summaries
 
     def get_thermal_links(self) -> List[Dict[str, Any]]:
-        """Return thermal coupling data between adjacent cells for visualisation."""
+        """
+        Return thermal coupling data between adjacent cells for visualisation.
+
+        Uses the actual computed heat flow from _apply_thermal_coupling
+        (surface-to-surface model) when available, otherwise falls back to
+        instantaneous surface temperature difference calculation.
+        """
         G = self.config.inter_cell_thermal_conductance
+        link_q = getattr(self, '_thermal_link_q', {})
         links = []
 
         # Within each parallel string: series-adjacent cells
         for string in self._cell_grid:
             for i in range(len(string) - 1):
-                T_a = string[i].thermal.T_core - 273.15
-                T_b = string[i + 1].thermal.T_core - 273.15
-                Q = G * (T_a - T_b)
+                cell_a = string[i]
+                cell_b = string[i + 1]
+                id_a = cell_a.config.cell_id
+                id_b = cell_b.config.cell_id
+
+                # Use tracked Q if available (from last step), else compute
+                Q = link_q.get((id_a, id_b))
+                if Q is None:
+                    Q = G * (cell_a.thermal.T_surface - cell_b.thermal.T_surface)
+
+                T_surf_a = cell_a.thermal.T_surface - 273.15
+                T_surf_b = cell_b.thermal.T_surface - 273.15
+                T_core_a = cell_a.thermal.T_core - 273.15
+                T_core_b = cell_b.thermal.T_core - 273.15
+
                 links.append({
-                    "from": string[i].config.cell_id,
-                    "to": string[i + 1].config.cell_id,
+                    "from": id_a,
+                    "to": id_b,
                     "heat_flow_w": float(Q),
-                    "temp_diff_c": float(T_a - T_b),
+                    "temp_diff_c": float(T_surf_a - T_surf_b),
+                    "from_temp_c": float(T_core_a),
+                    "to_temp_c": float(T_core_b),
+                    "from_surface_c": float(T_surf_a),
+                    "to_surface_c": float(T_surf_b),
+                    "coupling_type": "series",
                 })
 
         # Across parallel strings: cells at the same series index
@@ -276,14 +419,28 @@ class BatteryPack:
                     if si < len(self._cell_grid[pi]) and si < len(self._cell_grid[pi + 1]):
                         cell_a = self._cell_grid[pi][si]
                         cell_b = self._cell_grid[pi + 1][si]
-                        T_a = cell_a.thermal.T_core - 273.15
-                        T_b = cell_b.thermal.T_core - 273.15
-                        Q = G * 0.5 * (T_a - T_b)  # weaker cross-string coupling
+                        id_a = cell_a.config.cell_id
+                        id_b = cell_b.config.cell_id
+
+                        Q = link_q.get((id_a, id_b))
+                        if Q is None:
+                            Q = G * 0.6 * (cell_a.thermal.T_surface - cell_b.thermal.T_surface)
+
+                        T_surf_a = cell_a.thermal.T_surface - 273.15
+                        T_surf_b = cell_b.thermal.T_surface - 273.15
+                        T_core_a = cell_a.thermal.T_core - 273.15
+                        T_core_b = cell_b.thermal.T_core - 273.15
+
                         links.append({
-                            "from": cell_a.config.cell_id,
-                            "to": cell_b.config.cell_id,
+                            "from": id_a,
+                            "to": id_b,
                             "heat_flow_w": float(Q),
-                            "temp_diff_c": float(T_a - T_b),
+                            "temp_diff_c": float(T_surf_a - T_surf_b),
+                            "from_temp_c": float(T_core_a),
+                            "to_temp_c": float(T_core_b),
+                            "from_surface_c": float(T_surf_a),
+                            "to_surface_c": float(T_surf_b),
+                            "coupling_type": "parallel",
                         })
 
         return links

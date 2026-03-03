@@ -1,25 +1,18 @@
 /**
- * BMS Dashboard — Full-width Battery Management System view
+ * BMS Dashboard — Full Battery Management System monitoring view
  *
- * Provides a comprehensive, animated pack management interface:
- *   - Pack overview: voltage, current, power, temp spread
- *   - Per-cell voltage bars with OV/UV safety limits
- *   - Per-cell temperature bars with overtemp/critical limits
- *   - Per-cell SOC comparison bars
- *   - Animated contactor state machine with current flow
- *   - Active faults with animated severity-based entrance
- *   - Animated cell balancing visualization with bleed indicators
- *   - Protection action log with real-time descriptions
- *   - Fault history timeline
+ * Redesigned to:
+ *   1. Fit within the viewport (grid layout, no endless scroll)
+ *   2. Clear, purposeful animated contactor circuit diagram
+ *   3. Live animations on every component — simulates real-life BMS
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useBatteryStore } from '../hooks/useBatteryState';
 
-const API_BASE = 'http://localhost:8001/api';
+const API = 'http://localhost:8001/api';
 
 /* ── Types ─────────────────────────────────────────────────── */
-
 interface CellInfo {
   cell_id: string;
   soc: number;
@@ -32,119 +25,649 @@ interface CellInfo {
   capacity_ah: number;
 }
 
-/* ── BMS Safety Limits (match backend BMSConfig defaults) ─── */
-
 const LIMITS = {
-  cellVMax: 4.25,
-  cellVMin: 2.50,
-  cellTempMax: 55,
-  cellTempCritical: 75,
-  cellTempMin: -20,
-  packCurrentMax: 150,
-  imbalanceVThreshold: 0.05,
+  cellVMax: 4.25, cellVMin: 2.50,
+  cellTempMax: 55, cellTempCritical: 75, cellTempMin: -20,
+  packCurrentMax: 150, imbalanceVThreshold: 0.05,
 };
 
-/* ── Fault severity ────────────────────────────────────────── */
-
-const FAULT_META: Record<string, { color: string; bg: string; icon: string; desc: string }> = {
-  THERMAL_RUNAWAY: { color: '#ef4444', bg: 'bg-red-500/20 border-red-500/50', icon: '🔥', desc: 'Critical — cell temp exceeds 75°C, contactor opens immediately' },
-  OVER_TEMP:       { color: '#f97316', bg: 'bg-orange-500/20 border-orange-500/50', icon: '🌡️', desc: 'Cell temperature above 55°C limit' },
-  OVER_VOLTAGE:    { color: '#eab308', bg: 'bg-yellow-500/20 border-yellow-500/50', icon: '⚡', desc: 'Cell voltage exceeds 4.25V upper limit' },
-  UNDER_VOLTAGE:   { color: '#eab308', bg: 'bg-yellow-500/20 border-yellow-500/50', icon: '🔋', desc: 'Cell voltage below 2.50V lower limit' },
-  OVER_CURRENT:    { color: '#f97316', bg: 'bg-orange-500/20 border-orange-500/50', icon: '⚠️', desc: 'Pack current exceeds 150A maximum' },
-  CELL_IMBALANCE:  { color: '#3b82f6', bg: 'bg-blue-500/20 border-blue-500/50', icon: '⚖️', desc: 'Voltage spread across cells > 50mV' },
-  UNDER_TEMP:      { color: '#06b6d4', bg: 'bg-cyan-500/20 border-cyan-500/50', icon: '❄️', desc: 'Cell temperature below -20°C limit' },
+const FAULT_META: Record<string, { color: string; icon: string; desc: string; severity: 'critical' | 'warn' | 'info' }> = {
+  THERMAL_RUNAWAY: { color: '#ef4444', icon: '🔥', desc: 'Cell temp > 75°C — contactor opens', severity: 'critical' },
+  OVER_TEMP:       { color: '#f97316', icon: '🌡️', desc: 'Cell temp above 55°C', severity: 'warn' },
+  OVER_VOLTAGE:    { color: '#eab308', icon: '⚡', desc: 'Cell > 4.25V limit', severity: 'warn' },
+  UNDER_VOLTAGE:   { color: '#eab308', icon: '🔋', desc: 'Cell < 2.50V limit', severity: 'warn' },
+  OVER_CURRENT:    { color: '#f97316', icon: '⚠️', desc: 'Pack current > 150A', severity: 'warn' },
+  CELL_IMBALANCE:  { color: '#3b82f6', icon: '⚖️', desc: 'Voltage spread > 50mV', severity: 'info' },
+  UNDER_TEMP:      { color: '#06b6d4', icon: '❄️', desc: 'Cell temp below -20°C', severity: 'info' },
 };
 
-function formatFault(f: string) { return f.replace(/_/g, ' '); }
-function formatTime(s: number) {
-  if (s < 60) return `${s.toFixed(0)}s`;
-  if (s < 3600) return `${(s / 60).toFixed(1)}m`;
-  return `${(s / 3600).toFixed(1)}h`;
-}
+/* ── Global CSS for animations (injected once) ─────────────── */
+const GLOBAL_CSS = `
+@keyframes fadeSlideIn{ from{opacity:0;transform:translateY(-8px)} to{opacity:1;transform:translateY(0)} }
+@keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-2px)} 75%{transform:translateX(2px)} }
+@keyframes glowPulse { 0%,100%{box-shadow:0 0 4px var(--glow)} 50%{box-shadow:0 0 16px var(--glow)} }
+@keyframes bleedRing  { 0%{transform:scale(1);opacity:.7} 100%{transform:scale(1.4);opacity:0} }
+@keyframes livePing   { 0%,100%{opacity:1} 50%{opacity:.3} }
+@keyframes barGrow    { from{transform:scaleX(0)} to{transform:scaleX(1)} }
+`;
 
-/* ── Sub-components ────────────────────────────────────────── */
-
-function PackOverviewCard({ label, value, unit, color, sub }: {
-  label: string; value: string; unit: string; color: string; sub?: string;
+/* ──────────────────────────────────────────────────────────── */
+/*  Stat Card — compact overview metric with live color pulse  */
+/* ──────────────────────────────────────────────────────────── */
+function Stat({ label, value, unit, color, pulse, sub }: {
+  label: string; value: string; unit: string; color: string; pulse?: boolean; sub?: string;
 }) {
   return (
-    <div className="bg-panel-surface rounded-xl p-3 border border-panel-border flex-1 min-w-[140px]">
-      <div className="text-[10px] text-panel-muted uppercase tracking-wider">{label}</div>
-      <div className="flex items-baseline gap-1 mt-1">
-        <span className="text-2xl font-bold" style={{ color }}>{value}</span>
-        <span className="text-xs text-panel-muted">{unit}</span>
+    <div
+      className="rounded-lg p-2 border flex flex-col gap-0.5 min-w-0 overflow-hidden"
+      style={{
+        background: `${color}08`, borderColor: `${color}30`,
+        animation: pulse ? 'glowPulse 2s ease-in-out infinite' : undefined,
+        ['--glow' as any]: `${color}40`,
+      }}
+    >
+      <span className="text-[9px] uppercase tracking-wider truncate" style={{ color: `${color}99` }}>{label}</span>
+      <div className="flex items-baseline gap-1 min-w-0">
+        <span className="text-lg font-bold tabular-nums truncate" style={{ color }}>{value}</span>
+        <span className="text-[10px] shrink-0" style={{ color: `${color}80` }}>{unit}</span>
       </div>
-      {sub && <div className="text-[10px] text-panel-muted mt-0.5">{sub}</div>}
+      {sub && <span className="text-[9px] truncate" style={{ color: `${color}70` }}>{sub}</span>}
     </div>
   );
 }
 
-/** Horizontal bar chart with safety limit markers */
-function CellBarChart({ cells, accessor, label, unit, color, limits, domain }: {
+/* ──────────────────────────────────────────────────────────── */
+/*  Compact Cell Bars — animated horizontal bars + limits      */
+/* ──────────────────────────────────────────────────────────── */
+function CellBars({ cells, get, label, unit, color, domain, limits }: {
   cells: CellInfo[];
-  accessor: (c: CellInfo) => number;
-  label: string;
-  unit: string;
-  color: string;
-  limits?: { value: number; color: string; label: string }[];
+  get: (c: CellInfo) => number;
+  label: string; unit: string; color: string;
   domain: [number, number];
+  limits?: { at: number; color: string; tag: string }[];
 }) {
   const [min, max] = domain;
-  const range = max - min;
-
+  const span = max - min;
   return (
-    <div className="bg-panel-surface rounded-xl p-3 border border-panel-border">
-      <div className="text-xs font-semibold text-panel-text mb-2">{label}</div>
-      <div className="space-y-1 relative">
-        {cells.map((cell) => {
-          const val = accessor(cell);
-          const pct = Math.max(0, Math.min(100, ((val - min) / range) * 100));
+    <div className="rounded-lg border border-panel-border bg-panel-surface p-2.5 flex flex-col min-h-0 overflow-hidden">
+      <div className="text-[10px] font-semibold text-panel-text mb-1.5 flex justify-between items-center shrink-0">
+        {label}
+        {limits && (
+          <span className="flex gap-2">
+            {limits.map(l => (
+              <span key={l.tag} className="flex items-center gap-0.5 text-[8px]" style={{ color: l.color }}>
+                <span className="w-1.5 h-1.5 rounded-sm" style={{ background: l.color }} />{l.tag} {l.at}{unit}
+              </span>
+            ))}
+          </span>
+        )}
+      </div>
+      <div className="flex-1 space-y-[3px] min-h-0 overflow-y-auto" style={{ maxHeight: Math.min(cells.length * 18, 160) }}>
+        {cells.map(cell => {
+          const v = get(cell);
+          const pct = Math.max(0, Math.min(100, ((v - min) / span) * 100));
+          const isWarn = limits?.some(l => (l.tag.includes('Max') || l.tag.includes('OV') || l.tag.includes('Over') || l.tag.includes('Crit')) ? v > l.at : v < l.at);
           return (
-            <div key={cell.cell_id} className="flex items-center gap-2">
-              <div className="text-[9px] text-panel-muted w-10 text-right shrink-0 font-mono">
+            <div key={cell.cell_id} className="flex items-center gap-1.5">
+              <span className="text-[8px] text-panel-muted w-7 text-right font-mono shrink-0">
                 {cell.cell_id.replace('S', '').replace('_C', '.')}
-              </div>
-              <div className="flex-1 h-4 bg-panel-bg rounded-sm relative overflow-hidden">
-                {/* Safety limit lines */}
-                {limits?.map((lim) => {
-                  const limPct = ((lim.value - min) / range) * 100;
-                  if (limPct < 0 || limPct > 100) return null;
-                  return (
-                    <div
-                      key={lim.label}
-                      className="absolute top-0 bottom-0 w-px z-10"
-                      style={{ left: `${limPct}%`, backgroundColor: lim.color }}
-                      title={`${lim.label}: ${lim.value}${unit}`}
-                    />
-                  );
+              </span>
+              <div className="flex-1 h-3.5 bg-panel-bg rounded-sm relative overflow-hidden">
+                {limits?.map(l => {
+                  const lp = ((l.at - min) / span) * 100;
+                  if (lp < 0 || lp > 100) return null;
+                  return <div key={l.tag} className="absolute top-0 bottom-0 w-px z-10" style={{ left: `${lp}%`, background: l.color }} />;
                 })}
-                {/* Value bar */}
                 <div
-                  className="h-full rounded-sm transition-all duration-300"
+                  className="h-full rounded-sm transition-all duration-500"
                   style={{
                     width: `${pct}%`,
-                    backgroundColor: color,
-                    opacity: 0.85,
+                    background: isWarn ? '#ef4444' : color,
+                    opacity: .85,
+                    transformOrigin: 'left',
+                    animation: 'barGrow .6s ease-out',
                   }}
                 />
               </div>
-              <div className="text-[10px] text-panel-text w-14 text-right font-mono">
-                {val.toFixed(unit === 'V' ? 3 : unit === '°C' ? 1 : 1)}{unit}
-              </div>
+              <span className="text-[9px] font-mono tabular-nums w-12 text-right" style={{ color: isWarn ? '#ef4444' : color }}>
+                {v.toFixed(unit === 'V' ? 3 : 1)}{unit}
+              </span>
             </div>
           );
         })}
       </div>
+    </div>
+  );
+}
 
-      {/* Legend for limit lines */}
-      {limits && limits.length > 0 && (
-        <div className="flex gap-3 mt-2 flex-wrap">
-          {limits.map((lim) => (
-            <div key={lim.label} className="flex items-center gap-1">
-              <div className="w-2 h-2 rounded-sm" style={{ backgroundColor: lim.color }} />
-              <span className="text-[9px] text-panel-muted">{lim.label} ({lim.value}{unit})</span>
+/* ──────────────────────────────────────────────────────────── */
+/*  SVG Circuit Contactor — the centerpiece, fully animated    */
+/*                                                              */
+/*  Shows: Battery → Fuse → Junction → Pre-charge path (K2 +  */
+/*  resistor) → Main contactor K1 → Current sensor → Load     */
+/*  with return path.  Animated electron dots flow when the     */
+/*  circuit is closed.  Clear labels explain every component.   */
+/* ──────────────────────────────────────────────────────────── */
+function CircuitContactor({ closed, precharge, current, voltage, isCharging }: {
+  closed: boolean; precharge: boolean; current: number; voltage: number; isCharging: boolean;
+}) {
+  const tick = useRef(0);
+  const [frame, setFrame] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => { tick.current++; setFrame(tick.current); }, 60);
+    return () => clearInterval(id);
+  }, []);
+
+  // Electron dots positions along the main circuit loop
+  const mainDots = useMemo(() => {
+    if (!closed) return [];
+    return Array.from({ length: 8 }, (_, i) => ((frame * 2 + i * 12.5) % 100));
+  }, [closed, frame]);
+
+  // Pre-charge path electron dots (slower)
+  const preDots = useMemo(() => {
+    if (!precharge) return [];
+    return Array.from({ length: 4 }, (_, i) => ((frame * 0.8 + i * 25) % 100));
+  }, [precharge, frame]);
+
+  const state = closed ? 'CLOSED' : precharge ? 'PRE-CHARGE' : 'OPEN';
+  const stateColor = closed ? '#22c55e' : precharge ? '#eab308' : '#ef4444';
+
+  return (
+    <div className="rounded-lg border border-panel-border bg-panel-surface p-3 flex flex-col">
+      <div className="text-[10px] font-semibold text-panel-text mb-1 flex items-center justify-between">
+        <span className="flex items-center gap-1.5">
+          <span className="text-sm">⚡</span> Pack Contactor Circuit
+        </span>
+        <span
+          className="px-2 py-0.5 rounded text-[9px] font-bold flex items-center gap-1"
+          style={{ background: `${stateColor}20`, color: stateColor }}
+        >
+          <span className="w-1.5 h-1.5 rounded-full" style={{
+            background: stateColor,
+            animation: (closed || precharge) ? 'livePing 1s ease infinite' : undefined
+          }} />
+          {state}
+        </span>
+      </div>
+
+      {/* Purpose explanation — always visible so user knows what this is */}
+      <div className="text-[9px] text-panel-muted mb-2 leading-relaxed">
+        {closed
+          ? '✅ Main contactor K1 engaged — high-voltage bus is live, current flowing between battery pack and load. The BMS continuously monitors for faults and will open the contactor if any safety limit is exceeded.'
+          : precharge
+          ? '⏳ Pre-charge relay K2 engaged — slowly charging load-side capacitors through a 50Ω resistor to prevent dangerous inrush current. Main contactor K1 will close once voltage equalizes (~2 seconds).'
+          : '🔒 Pack is disconnected — no current path exists between battery and external circuit. The BMS will close the contactor when simulation starts and all safety checks pass.'}
+      </div>
+
+      {/* SVG Circuit Diagram */}
+      <svg viewBox="0 0 420 190" className="w-full" preserveAspectRatio="xMidYMid meet" style={{ maxHeight: 160, minHeight: 100 }}>
+        <defs>
+          <pattern id="bmsGrid" width="20" height="20" patternUnits="userSpaceOnUse">
+            <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#334155" strokeWidth="0.3" />
+          </pattern>
+          <filter id="electronGlow">
+            <feGaussianBlur stdDeviation="2.5" result="blur" />
+            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+        </defs>
+        <rect width="420" height="190" fill="url(#bmsGrid)" rx="8" opacity=".3" />
+
+        {/* ── Battery Pack (left) ── */}
+        <g transform="translate(15,58)">
+          <rect x="0" y="0" width="55" height="64" rx="7" fill="#0f172a" stroke={closed ? '#3b82f6' : '#334155'} strokeWidth="1.5" />
+          {/* Battery fill level based on SOC proxy (voltage) */}
+          <rect x="4" y={4 + 56 * (1 - Math.min(1, voltage / 17))}
+                width="47" height={56 * Math.min(1, voltage / 17)}
+                rx="4" fill={closed ? '#3b82f620' : '#33415520'}>
+            {closed && <animate attributeName="opacity" values=".3;.6;.3" dur="2s" repeatCount="indefinite" />}
+          </rect>
+          <text x="27.5" y="22" textAnchor="middle" fill="#94a3b8" fontSize="8" fontWeight="600">BATTERY</text>
+          <text x="27.5" y="33" textAnchor="middle" fill="#94a3b8" fontSize="7">PACK</text>
+          <text x="27.5" y="47" textAnchor="middle" fill={stateColor} fontSize="10" fontWeight="700">{voltage.toFixed(1)}V</text>
+          <text x="27.5" y="58" textAnchor="middle" fill="#94a3b8" fontSize="7">{Math.abs(current).toFixed(1)}A</text>
+          {/* Positive terminal */}
+          <rect x="14" y="-7" width="11" height="9" rx="2" fill="#ef4444" opacity=".85" />
+          <text x="19.5" y="0" textAnchor="middle" fill="white" fontSize="8" fontWeight="700">+</text>
+          {/* Negative terminal */}
+          <rect x="30" y="-7" width="11" height="9" rx="2" fill="#3b82f6" opacity=".85" />
+          <text x="35.5" y="0" textAnchor="middle" fill="white" fontSize="8" fontWeight="700">−</text>
+        </g>
+
+        {/* ── Wire: Battery+ → Fuse ── */}
+        <line x1="70" y1="90" x2="98" y2="90" stroke={closed || precharge ? '#22c55e' : '#475569'} strokeWidth="2" />
+
+        {/* ── Fuse ── */}
+        <g transform="translate(98,82)">
+          <rect x="0" y="0" width="32" height="16" rx="3" fill="#0f172a" stroke="#94a3b8" strokeWidth="1" />
+          <line x1="7" y1="8" x2="25" y2="8" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="3,2" />
+          <text x="16" y="28" textAnchor="middle" fill="#64748b" fontSize="6.5">FUSE</text>
+          <text x="16" y="36" textAnchor="middle" fill="#475569" fontSize="5">150A</text>
+        </g>
+
+        {/* ── Wire: Fuse → Junction ── */}
+        <line x1="130" y1="90" x2="160" y2="90" stroke={closed || precharge ? '#22c55e' : '#475569'} strokeWidth="2" />
+
+        {/* ── Junction dot ── */}
+        <circle cx="160" cy="90" r="3" fill={closed || precharge ? '#22c55e' : '#475569'} />
+
+        {/* ══ PRE-CHARGE PATH (top bypass) ══ */}
+        {/* Junction → up */}
+        <line x1="160" y1="90" x2="160" y2="35" stroke={precharge ? '#eab308' : '#33415540'} strokeWidth={precharge ? 1.5 : 1} strokeDasharray={precharge ? '' : '3,3'} />
+        {/* Left horizontal to K2 */}
+        <line x1="160" y1="35" x2="180" y2="35" stroke={precharge ? '#eab308' : '#33415540'} strokeWidth={precharge ? 1.5 : 1} />
+        {/* Pre-charge relay K2 */}
+        <g transform="translate(180,22)">
+          <rect x="0" y="0" width="38" height="26" rx="4"
+                fill={precharge ? '#eab30812' : '#0f172a'}
+                stroke={precharge ? '#eab308' : '#334155'}
+                strokeWidth={precharge ? 1.5 : 0.8} />
+          <text x="19" y="11" textAnchor="middle" fill={precharge ? '#eab308' : '#475569'} fontSize="9" fontWeight="700">K2</text>
+          <text x="19" y="21" textAnchor="middle" fill={precharge ? '#eab308' : '#475569'} fontSize="6">
+            {precharge ? 'CLOSED' : 'OPEN'}
+          </text>
+          {precharge && (
+            <rect x="-2" y="-2" width="42" height="30" rx="5" fill="none" stroke="#eab30850" strokeWidth="1.5">
+              <animate attributeName="opacity" values="1;.4;1" dur="1s" repeatCount="indefinite" />
+            </rect>
+          )}
+        </g>
+        {/* K2 → Resistor */}
+        <line x1="218" y1="35" x2="240" y2="35" stroke={precharge ? '#eab308' : '#33415540'} strokeWidth={precharge ? 1.5 : 1} />
+        {/* Pre-charge resistor (zigzag) */}
+        <g transform="translate(240,27)">
+          <polyline points="0,8 5,0 10,16 15,0 20,16 25,0 30,8" fill="none"
+                    stroke={precharge ? '#eab308' : '#475569'} strokeWidth="1.2" />
+          <text x="15" y="28" textAnchor="middle" fill="#64748b" fontSize="6">50Ω</text>
+        </g>
+        {/* Resistor → right junction */}
+        <line x1="270" y1="35" x2="290" y2="35" stroke={precharge ? '#eab308' : '#33415540'} strokeWidth={precharge ? 1.5 : 1} />
+        {/* Down from pre-charge path to main wire */}
+        <line x1="290" y1="35" x2="290" y2="90" stroke={precharge ? '#eab308' : '#33415540'} strokeWidth={precharge ? 1.5 : 1} />
+
+        {/* Pre-charge label */}
+        <text x="235" y="18" textAnchor="middle" fill={precharge ? '#eab30890' : '#33415560'} fontSize="5.5" fontStyle="italic">
+          PRE-CHARGE PATH
+        </text>
+
+        {/* Pre-charge electron dots */}
+        {preDots.map((pos, i) => {
+          const p = pos / 100;
+          let cx: number, cy: number;
+          if (p < 0.2) {
+            cx = 160; cy = 90 - p / 0.2 * 55;
+          } else if (p < 0.75) {
+            cx = 160 + (p - 0.2) / 0.55 * 130; cy = 35;
+          } else {
+            cx = 290; cy = 35 + (p - 0.75) / 0.25 * 55;
+          }
+          return <circle key={`pre-${i}`} cx={cx} cy={cy} r="2.5" fill="#eab308" opacity=".9" filter="url(#electronGlow)" />;
+        })}
+
+        {/* ══ MAIN CONTACTOR K1 (on the main wire) ══ */}
+        <g transform="translate(190,72)">
+          <rect x="0" y="0" width="54" height="36" rx="6"
+                fill={closed ? '#22c55e08' : '#0f172a'}
+                stroke={closed ? '#22c55e' : precharge ? '#eab308' : '#ef4444'}
+                strokeWidth="2" />
+          <text x="27" y="16" textAnchor="middle" fill={closed ? '#22c55e' : '#94a3b8'} fontSize="13" fontWeight="800">K1</text>
+          <text x="27" y="29" textAnchor="middle" fill={closed ? '#22c55e' : precharge ? '#eab308' : '#ef4444'} fontSize="7" fontWeight="600">
+            {closed ? '● CLOSED' : precharge ? '◐ PRE' : '○ OPEN'}
+          </text>
+          {/* Glow ring when closed */}
+          {closed && (
+            <rect x="-3" y="-3" width="60" height="42" rx="8" fill="none" stroke="#22c55e40" strokeWidth="2">
+              <animate attributeName="opacity" values="1;.3;1" dur="2s" repeatCount="indefinite" />
+            </rect>
+          )}
+        </g>
+        {/* Label */}
+        <text x="217" y="118" textAnchor="middle" fill={closed ? '#22c55e80' : '#47556980'} fontSize="5.5">
+          MAIN CONTACTOR
+        </text>
+
+        {/* Wire: Junction → K1 */}
+        <line x1="160" y1="90" x2="190" y2="90" stroke={closed || precharge ? '#22c55e' : '#475569'} strokeWidth="2" />
+        {/* Wire: K1 → junction out */}
+        <line x1="244" y1="90" x2="290" y2="90" stroke={closed ? '#22c55e' : '#475569'} strokeWidth="2" />
+
+        {/* ── Junction dot (right) ── */}
+        <circle cx="290" cy="90" r="3" fill={closed ? '#22c55e' : '#475569'} />
+
+        {/* ── Current Sensor ── */}
+        <g transform="translate(300,80)">
+          <circle cx="10" cy="10" r="10" fill="#0f172a" stroke="#a855f7" strokeWidth="1.2" />
+          <text x="10" y="13" textAnchor="middle" fill="#a855f7" fontSize="9" fontWeight="700">A</text>
+          <text x="10" y="30" textAnchor="middle" fill="#64748b" fontSize="5.5">SENSOR</text>
+        </g>
+        <line x1="290" y1="90" x2="290" y2="90" stroke={closed ? '#22c55e' : '#475569'} strokeWidth="2" />
+        <line x1="320" y1="90" x2="340" y2="90" stroke={closed ? '#22c55e' : '#475569'} strokeWidth="2" />
+
+        {/* ── Load (right) ── */}
+        <g transform="translate(340,64)">
+          <rect x="0" y="0" width="60" height="52" rx="7" fill="#0f172a" stroke={closed ? '#3b82f6' : '#334155'} strokeWidth="1.5" />
+          <text x="30" y="18" textAnchor="middle" fill={closed ? '#3b82f6' : '#475569'} fontSize="9" fontWeight="600">LOAD</text>
+          <text x="30" y="30" textAnchor="middle" fill={closed ? '#3b82f6' : '#475569'} fontSize="8" fontWeight="700">
+            {closed ? `${Math.abs(voltage * current).toFixed(0)}W` : 'OFF'}
+          </text>
+          <text x="30" y="43" textAnchor="middle" fill="#475569" fontSize="6">
+            {closed ? (isCharging ? 'CHARGER' : 'INVERTER') : 'STANDBY'}
+          </text>
+          {closed && (
+            <rect x="-2" y="-2" width="64" height="56" rx="8" fill="none" stroke="#3b82f630" strokeWidth="1.5">
+              <animate attributeName="opacity" values="1;.3;1" dur="2s" repeatCount="indefinite" />
+            </rect>
+          )}
+        </g>
+
+        {/* ── Return path (bottom wire) ── */}
+        <line x1="400" y1="116" x2="400" y2="160" stroke={closed ? '#3b82f6' : '#33415540'} strokeWidth="2" />
+        <line x1="400" y1="160" x2="42" y2="160" stroke={closed ? '#3b82f6' : '#33415540'} strokeWidth="2" />
+        <line x1="42" y1="160" x2="42" y2="122" stroke={closed ? '#3b82f6' : '#33415540'} strokeWidth="2" />
+        <text x="220" y="172" textAnchor="middle" fill="#475569" fontSize="6">RETURN PATH (−)</text>
+
+        {/* ── Main flow electron dots ── */}
+        {mainDots.map((pos, i) => {
+          const p = pos / 100;
+          let cx: number, cy: number;
+          if (p < 0.48) {
+            // Top wire: left to right (battery → load)
+            cx = 70 + p / 0.48 * 270;
+            cy = 90;
+          } else if (p < 0.58) {
+            // Down from load to bottom wire
+            cx = 400;
+            cy = 116 + (p - 0.48) / 0.1 * 44;
+          } else if (p < 0.88) {
+            // Bottom wire: right to left (return)
+            cx = 400 - (p - 0.58) / 0.3 * 358;
+            cy = 160;
+          } else {
+            // Up from bottom to battery−
+            cx = 42;
+            cy = 160 - (p - 0.88) / 0.12 * 38;
+          }
+          return (
+            <circle key={`main-${i}`}
+              cx={Math.min(405, Math.max(20, cx))} cy={cy}
+              r="3" opacity=".85" filter="url(#electronGlow)"
+              fill={isCharging ? '#3b82f6' : '#22c55e'} />
+          );
+        })}
+
+        {/* Direction arrows when closed */}
+        {closed && (
+          <>
+            <polygon points="148,86 158,90 148,94" fill="#22c55e" opacity=".5" />
+            <polygon points="268,86 278,90 268,94" fill="#22c55e" opacity=".5" />
+            <polygon points="220,164 210,160 220,156" fill="#3b82f6" opacity=".5" />
+            <polygon points="80,164 70,160 80,156" fill="#3b82f6" opacity=".5" />
+          </>
+        )}
+
+        {/* ── Legend ── */}
+        <text x="10" y="185" fill="#334155" fontSize="5.5">
+          BATTERY MANAGEMENT SYSTEM — CONTACTOR CIRCUIT DIAGRAM
+        </text>
+      </svg>
+
+      {/* Status bar below circuit */}
+      <div className="flex items-center gap-3 mt-1 text-[9px] flex-wrap">
+        <span className="flex items-center gap-1" style={{ color: stateColor }}>
+          <span className="w-1.5 h-1.5 rounded-full" style={{ background: stateColor, animation: 'livePing 1s infinite' }} />
+          K1: {closed ? 'CLOSED' : 'OPEN'}
+        </span>
+        <span className="flex items-center gap-1" style={{ color: precharge ? '#eab308' : '#475569' }}>
+          K2: {precharge ? 'PRE-CHARGE' : 'OPEN'}
+        </span>
+        <span className="flex items-center gap-1 text-panel-muted">
+          Fuse: {LIMITS.packCurrentMax}A
+        </span>
+        <span className="text-panel-muted ml-auto">
+          {closed ? `${isCharging ? '← Charging' : '→ Discharging'} @ ${Math.abs(current).toFixed(1)}A · ${Math.abs(voltage * current).toFixed(0)}W`
+            : precharge ? 'Inrush protection — capacitor pre-charge in progress'
+            : 'Circuit open — no current path'}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────── */
+/*  Fault Alert Bar — compact, animated severity indicators    */
+/* ──────────────────────────────────────────────────────────── */
+function FaultBar({ faults }: { faults: string[] }) {
+  if (faults.length === 0) {
+    return (
+      <div className="rounded-lg border border-green-500/30 bg-green-500/5 px-3 py-2 flex items-center gap-2">
+        <svg className="w-4 h-4 text-green-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+        </svg>
+        <span className="text-[11px] text-green-400 font-semibold">All Systems Normal</span>
+        <span className="ml-auto flex items-center gap-1">
+          <span className="w-1.5 h-1.5 bg-green-400 rounded-full" style={{ animation: 'livePing 1.5s infinite' }} />
+          <span className="text-[9px] text-green-400/70">LIVE</span>
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {faults.map((fault, i) => {
+        const meta = FAULT_META[fault] ?? { color: '#94a3b8', icon: '⚠️', desc: 'Unknown', severity: 'info' as const };
+        const isCrit = meta.severity === 'critical';
+        return (
+          <div
+            key={fault}
+            className="rounded-lg border px-3 py-2 flex items-center gap-2"
+            style={{
+              background: `${meta.color}10`, borderColor: `${meta.color}40`,
+              animation: isCrit ? 'shake .4s ease-in-out infinite' : `fadeSlideIn .3s ease-out ${i * 80}ms both`,
+            }}
+          >
+            <span className="text-base shrink-0 relative">
+              {meta.icon}
+              {isCrit && <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full animate-ping" />}
+            </span>
+            <div className="flex-1 min-w-0">
+              <span className="text-[11px] font-bold" style={{ color: meta.color }}>
+                {fault.replace(/_/g, ' ')}
+              </span>
+              <span className="text-[9px] text-panel-muted ml-2">{meta.desc}</span>
             </div>
+            <span className="text-[8px] font-bold px-1.5 py-0.5 rounded" style={{
+              background: `${meta.color}25`, color: meta.color
+            }}>
+              {isCrit ? 'CRITICAL' : 'WARNING'}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────── */
+/*  Balancing Grid — compact animated cell bleeding display    */
+/* ──────────────────────────────────────────────────────────── */
+function BalancingGrid({ active, map }: { active: boolean; map: Record<string, boolean> }) {
+  const entries = Object.entries(map);
+  const bleeding = entries.filter(([, v]) => v);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => setTick(t => (t + 1) % 60), 500);
+    return () => clearInterval(id);
+  }, [active]);
+
+  return (
+    <div className="rounded-lg border border-panel-border bg-panel-surface p-2.5 flex flex-col">
+      <div className="text-[10px] font-semibold text-panel-text mb-1 flex items-center justify-between">
+        <span>⚖️ Passive Cell Balancing</span>
+        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1 ${
+          active ? 'bg-blue-500/20 text-blue-400' : 'bg-panel-bg text-panel-muted'
+        }`}>
+          {active && <span className="w-1.5 h-1.5 bg-blue-400 rounded-full" style={{ animation: 'livePing 1s infinite' }} />}
+          {active ? `ACTIVE — ${bleeding.length}/${entries.length}` : 'IDLE'}
+        </span>
+      </div>
+
+      <div className="text-[9px] text-panel-muted mb-2 leading-relaxed">
+        {active
+          ? 'Bleed resistors are draining energy from high-SOC cells to equalize voltage across the pack. Blue cells are actively being balanced.'
+          : 'All cell voltages are within 50mV of each other — no balancing needed. BMS checks every cycle.'}
+      </div>
+
+      <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5 flex-1">
+        {entries.map(([id, bleed], idx) => (
+          <div
+            key={id}
+            className="relative rounded h-9 flex flex-col items-center justify-center transition-all duration-300"
+            style={{
+              background: bleed ? '#3b82f618' : '#0f172a',
+              border: `1px solid ${bleed ? '#3b82f650' : '#334155'}`,
+              boxShadow: bleed ? '0 0 8px #3b82f620' : undefined,
+            }}
+          >
+            <span className="text-[8px] font-mono" style={{ color: bleed ? '#60a5fa' : '#64748b' }}>
+              {id.replace('S', '').replace('_C', '.')}
+            </span>
+            {bleed && (
+              <>
+                <span className="text-[6px] text-blue-300/80 leading-none mt-px">
+                  {tick % 2 === 0 ? '↓' : '↕'}50mA
+                </span>
+                <div
+                  className="absolute inset-0 rounded border border-blue-400/40"
+                  style={{ animation: `bleedRing 1.2s ease-out infinite ${(idx * 200) % 1200}ms` }}
+                />
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {active && bleeding.length > 0 && (
+        <div className="flex items-center gap-2 mt-2">
+          <div className="flex-1 h-1 bg-panel-bg rounded-full overflow-hidden">
+            <div className="h-full bg-blue-400 rounded-full transition-all duration-700"
+                 style={{ width: `${(bleeding.length / Math.max(entries.length, 1)) * 100}%` }} />
+          </div>
+          <span className="text-[9px] text-blue-400 font-mono">{bleeding.length}/{entries.length}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────── */
+/*  Protection Status — live description of BMS actions        */
+/* ──────────────────────────────────────────────────────────── */
+function ProtectionStatus({ bms, cells, packMetrics }: { bms: any; cells: CellInfo[]; packMetrics: any }) {
+  const items: { icon: string; text: string; color: string; live: boolean }[] = [];
+
+  if (bms.contactor_closed) {
+    items.push({ icon: '🔌', text: `Contactor K1 closed — HV bus active, ${packMetrics?.isCharging ? 'charging' : 'discharging'} @ ${Math.abs(packMetrics?.packCurrent ?? 0).toFixed(1)}A`, color: '#22c55e', live: true });
+  } else if (bms.precharge_active) {
+    items.push({ icon: '⚡', text: 'Pre-charge active (K2 ON) — limiting inrush through 50Ω resistor before closing K1', color: '#eab308', live: true });
+  } else {
+    items.push({ icon: '🛑', text: 'Contactor open — pack isolated, no current path to load', color: '#ef4444', live: false });
+  }
+
+  if (bms.balancing_active) {
+    const n = Object.values(bms.balancing_map ?? {}).filter(Boolean).length;
+    items.push({ icon: '⚖️', text: `Balancing ${n} cells via passive bleed @ 50mA each — Δ${packMetrics?.vSpread ?? '?'}mV spread`, color: '#3b82f6', live: true });
+  }
+
+  const hotCells = cells.filter(c => c.temp_c > LIMITS.cellTempMax);
+  const highV = cells.filter(c => c.voltage > LIMITS.cellVMax);
+  const lowV = cells.filter(c => c.voltage < LIMITS.cellVMin);
+  if (hotCells.length) items.push({ icon: '🌡️', text: `Over-temp: ${hotCells.map(c => `${c.cell_id.replace('S','').replace('_C','.')} (${c.temp_c.toFixed(1)}°C)`).join(', ')}`, color: '#f97316', live: true });
+  if (highV.length) items.push({ icon: '⬆️', text: `Over-voltage: ${highV.map(c => c.cell_id.replace('S','').replace('_C','.')).join(', ')} > ${LIMITS.cellVMax}V`, color: '#eab308', live: true });
+  if (lowV.length) items.push({ icon: '⬇️', text: `Under-voltage: ${lowV.map(c => c.cell_id.replace('S','').replace('_C','.')).join(', ')} < ${LIMITS.cellVMin}V`, color: '#eab308', live: true });
+
+  if ((bms.active_faults ?? []).length === 0 && !bms.balancing_active) {
+    items.push({ icon: '🔍', text: 'Monitoring all cells — voltage, temperature, current within safe limits. BMS checks every simulation cycle.', color: '#22c55e', live: true });
+  }
+
+  return (
+    <div className="rounded-lg border border-panel-border bg-panel-surface p-2.5 flex flex-col">
+      <div className="text-[10px] font-semibold text-panel-text mb-1.5 flex items-center gap-1.5">
+        🛡️ BMS Actions
+        <span className="ml-auto text-[8px] text-panel-muted bg-panel-bg px-1.5 py-0.5 rounded">{items.length} active</span>
+      </div>
+      <div className="space-y-1.5 flex-1 overflow-y-auto">
+        {items.map((item, i) => (
+          <div key={i} className="flex items-start gap-1.5 rounded px-2 py-1.5 border border-panel-border/40 bg-panel-bg"
+               style={{ animation: `fadeSlideIn .3s ease-out ${i * 60}ms both` }}>
+            <span className="text-sm shrink-0">{item.icon}</span>
+            <span className="text-[10px] flex-1 leading-relaxed" style={{ color: item.color }}>{item.text}</span>
+            {item.live && <span className="w-1.5 h-1.5 rounded-full shrink-0 mt-1" style={{ background: item.color, animation: 'livePing 2s infinite' }} />}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────── */
+/*  Fault Timeline — compact scrollable list                    */
+/* ──────────────────────────────────────────────────────────── */
+function FaultLog({ history }: { history: { fault: string; time_s: number; cleared: boolean }[] }) {
+  const recent = history.slice(-12).reverse();
+  if (recent.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border border-panel-border bg-panel-surface p-2.5 flex flex-col">
+      <div className="text-[10px] font-semibold text-panel-text mb-1.5">📋 Fault History</div>
+      <div className="flex-1 space-y-1 overflow-y-auto max-h-28">
+        {recent.map((e, i) => {
+          const m = FAULT_META[e.fault] ?? { color: '#94a3b8', icon: '?' };
+          return (
+            <div key={`${e.fault}-${e.time_s}-${i}`} className="flex items-center gap-1.5 text-[10px]"
+                 style={{ animation: `fadeSlideIn .2s ease-out ${i * 30}ms both` }}>
+              <span className="text-xs">{m.icon}</span>
+              <span className={e.cleared ? 'text-panel-muted line-through flex-1' : 'flex-1'} style={{ color: e.cleared ? undefined : m.color }}>
+                {e.fault.replace(/_/g, ' ')}
+              </span>
+              <span className="text-panel-muted font-mono text-[9px]">
+                {e.time_s < 60 ? `${e.time_s.toFixed(0)}s` : `${(e.time_s / 60).toFixed(1)}m`}
+              </span>
+              {e.cleared
+                ? <span className="text-green-500 text-[8px] font-bold">✓</span>
+                : <span className="w-1.5 h-1.5 rounded-full" style={{ background: m.color, animation: 'livePing 1.5s infinite' }} />}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────── */
+/*  Safety Limits — collapsible reference                       */
+/* ──────────────────────────────────────────────────────────── */
+function SafetyRef() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-lg border border-panel-border bg-panel-surface">
+      <button onClick={() => setOpen(!open)} className="w-full text-left px-3 py-2 flex items-center gap-2 text-[10px] text-panel-muted hover:text-panel-text transition-colors">
+        <span className={`transition-transform duration-200 ${open ? 'rotate-90' : ''}`}>▶</span>
+        BMS Safety Configuration Reference
+      </button>
+      {open && (
+        <div className="px-3 pb-2 grid grid-cols-2 md:grid-cols-4 gap-2 text-[9px] border-t border-panel-border/50 pt-2"
+             style={{ animation: 'fadeSlideIn .2s ease-out' }}>
+          {[
+            ['Cell V max', `${LIMITS.cellVMax} V`], ['Cell V min', `${LIMITS.cellVMin} V`],
+            ['Temp max', `${LIMITS.cellTempMax}°C`], ['Temp critical', `${LIMITS.cellTempCritical}°C`],
+            ['Pack I max', `${LIMITS.packCurrentMax} A`], ['Imbalance', `${LIMITS.imbalanceVThreshold * 1000} mV`],
+            ['Bleed rate', '50 mA'], ['Pre-charge', '2.0 s'],
+          ].map(([k, v]) => (
+            <div key={k}><span className="text-panel-muted">{k}: </span><span className="text-panel-text font-mono">{v}</span></div>
           ))}
         </div>
       )}
@@ -152,747 +675,164 @@ function CellBarChart({ cells, accessor, label, unit, color, limits, domain }: {
   );
 }
 
-/** Animated contactor state diagram with current flow */
-function ContactorDiagram({ closed, precharge }: { closed: boolean; precharge: boolean }) {
-  const [animPhase, setAnimPhase] = useState(0);
-  const flowRef = useRef(0);
-
-  // Animate current flow dots when contactor is closed
-  useEffect(() => {
-    if (!closed) { setAnimPhase(0); return; }
-    const id = setInterval(() => {
-      flowRef.current = (flowRef.current + 1) % 100;
-      setAnimPhase(flowRef.current);
-    }, 50);
-    return () => clearInterval(id);
-  }, [closed]);
-
-  // Current flow dot positions (moves left-to-right when closed)
-  const dotOffset = closed ? `${animPhase}%` : '0%';
-
-  return (
-    <div className="bg-panel-surface rounded-xl p-4 border border-panel-border">
-      <div className="text-xs font-semibold text-panel-text mb-3">Contactor State Machine</div>
-
-      {/* State machine indicator */}
-      <div className="flex items-center justify-center gap-1 mb-4">
-        {['OPEN', 'PRE-CHG', 'CLOSED'].map((label, i) => {
-          const isActive =
-            (i === 0 && !closed && !precharge) ||
-            (i === 1 && precharge) ||
-            (i === 2 && closed);
-          return (
-            <div key={label} className="flex items-center gap-1">
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[8px] font-bold transition-all duration-500 ${
-                isActive
-                  ? 'bg-green-500 text-white shadow-lg shadow-green-500/30 scale-110'
-                  : 'bg-panel-bg text-panel-muted border border-panel-border'
-              }`}>
-                {i + 1}
-              </div>
-              <span className={`text-[9px] transition-colors ${isActive ? 'text-green-400 font-bold' : 'text-panel-muted'}`}>
-                {label}
-              </span>
-              {i < 2 && <span className="text-panel-muted mx-1">→</span>}
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="flex items-center justify-center gap-2 relative">
-        {/* Pack + terminal */}
-        <div className="flex flex-col items-center">
-          <div className={`w-10 h-10 rounded-lg border-2 flex items-center justify-center text-xs font-bold transition-all duration-300 ${
-            closed ? 'bg-red-500/20 border-red-500 text-red-400 shadow-lg shadow-red-500/20' : 'bg-red-500/10 border-red-500/50 text-red-400/60'
-          }`}>+</div>
-          <span className="text-[9px] text-panel-muted mt-1">Pack +</span>
-        </div>
-
-        {/* Current flow line with animated dots */}
-        <div className="relative w-16 h-2">
-          <div className={`absolute inset-0 rounded transition-colors duration-500 ${closed ? 'bg-green-400' : 'bg-gray-600/50'}`} />
-          {closed && (
-            <>
-              <div className="absolute top-0 bottom-0 w-2 h-2 bg-white rounded-full animate-bounce" style={{ left: dotOffset, transition: 'left 0.05s linear' }} />
-              <div className="absolute top-0 bottom-0 w-2 h-2 bg-white/50 rounded-full" style={{ left: `${(animPhase + 30) % 100}%`, transition: 'left 0.05s linear' }} />
-            </>
-          )}
-        </div>
-
-        {/* Contactor K1 */}
-        <div className="flex flex-col items-center">
-          <div className={`w-14 h-14 rounded-xl border-2 flex flex-col items-center justify-center transition-all duration-500 ${
-            closed
-              ? 'border-green-400 text-green-400 bg-green-500/10 shadow-lg shadow-green-500/30'
-              : precharge
-                ? 'border-yellow-400 text-yellow-400 bg-yellow-500/10 shadow-lg shadow-yellow-500/20 animate-pulse'
-                : 'border-red-400 text-red-400 bg-red-500/10'
-          }`}>
-            <span className="text-lg font-bold">K1</span>
-            <span className="text-[8px]">{closed ? 'ON' : precharge ? 'PRE' : 'OFF'}</span>
-          </div>
-          <span className={`text-[10px] font-bold mt-1 transition-colors duration-300 ${
-            closed ? 'text-green-400' : precharge ? 'text-yellow-400 animate-pulse' : 'text-red-400'
-          }`}>
-            {closed ? '● CLOSED' : precharge ? '◐ PRE-CHG' : '○ OPEN'}
-          </span>
-        </div>
-
-        {/* Current flow line */}
-        <div className="relative w-16 h-2">
-          <div className={`absolute inset-0 rounded transition-colors duration-500 ${closed ? 'bg-green-400' : 'bg-gray-600/50'}`} />
-          {closed && (
-            <>
-              <div className="absolute top-0 bottom-0 w-2 h-2 bg-white rounded-full" style={{ left: `${(animPhase + 50) % 100}%`, transition: 'left 0.05s linear' }} />
-              <div className="absolute top-0 bottom-0 w-2 h-2 bg-white/50 rounded-full" style={{ left: `${(animPhase + 80) % 100}%`, transition: 'left 0.05s linear' }} />
-            </>
-          )}
-        </div>
-
-        {/* Pack − terminal */}
-        <div className="flex flex-col items-center">
-          <div className={`w-10 h-10 rounded-lg border-2 flex items-center justify-center text-xs font-bold transition-all duration-300 ${
-            closed ? 'bg-blue-500/20 border-blue-500 text-blue-400 shadow-lg shadow-blue-500/20' : 'bg-blue-500/10 border-blue-500/50 text-blue-400/60'
-          }`}>−</div>
-          <span className="text-[9px] text-panel-muted mt-1">Pack −</span>
-        </div>
-      </div>
-
-      {precharge && (
-        <div className="mt-3 text-center">
-          <span className="text-[10px] bg-yellow-500/20 text-yellow-400 px-3 py-1 rounded-lg animate-pulse inline-flex items-center gap-1">
-            <span className="inline-block w-2 h-2 bg-yellow-400 rounded-full animate-ping" />
-            Pre-charge relay active — limiting inrush current
-          </span>
-        </div>
-      )}
-
-      {closed && (
-        <div className="mt-3 text-center">
-          <span className="text-[10px] bg-green-500/15 text-green-400 px-3 py-1 rounded-lg inline-flex items-center gap-1">
-            <span className="inline-block w-2 h-2 bg-green-400 rounded-full" />
-            Contactor closed — current flowing through pack
-          </span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Active faults with animated entrance + severity-based shaking */
-function FaultAlerts({ faults }: { faults: string[] }) {
-  const [visible, setVisible] = useState<string[]>([]);
-  const prevFaults = useRef<string[]>([]);
-
-  // Animated entrance: new faults slide in
-  useEffect(() => {
-    const newFaults = faults.filter((f) => !prevFaults.current.includes(f));
-    prevFaults.current = faults;
-    if (newFaults.length > 0) {
-      // Stagger new faults
-      newFaults.forEach((f, i) => {
-        setTimeout(() => setVisible((prev) => [...prev.filter((p) => faults.includes(p)), f]), i * 150);
-      });
-    }
-    setVisible(faults);
-  }, [faults]);
-
-  if (faults.length === 0) {
-    return (
-      <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 flex items-center gap-3 transition-all duration-500">
-        <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center text-green-400">
-          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-          </svg>
-        </div>
-        <div>
-          <div className="text-sm font-semibold text-green-400">All Systems Normal</div>
-          <div className="text-[11px] text-green-400/70">No active faults — all cells within safety limits</div>
-        </div>
-        {/* Animated heartbeat indicator */}
-        <div className="ml-auto flex items-center gap-1">
-          <div className="w-2 h-2 bg-green-400 rounded-full animate-ping" />
-          <span className="text-[10px] text-green-400">LIVE</span>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-2">
-      {faults.map((fault, idx) => {
-        const meta = FAULT_META[fault] ?? { color: '#94a3b8', bg: 'bg-gray-500/20 border-gray-500/50', icon: '⚠️', desc: 'Unknown fault' };
-        const isCritical = fault === 'THERMAL_RUNAWAY' || fault === 'OVER_TEMP';
-        return (
-          <div
-            key={fault}
-            className={`${meta.bg} border rounded-xl p-3 flex items-center gap-3 transition-all duration-300`}
-            style={{
-              animation: `${isCritical ? 'shake 0.5s ease-in-out infinite' : 'fadeSlideIn 0.3s ease-out'}`,
-              animationDelay: `${idx * 100}ms`,
-            }}
-          >
-            <div className="text-2xl shrink-0 relative">
-              {meta.icon}
-              {isCritical && (
-                <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-ping" />
-              )}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-bold" style={{ color: meta.color }}>{formatFault(fault)}</div>
-              <div className="text-[10px] text-panel-muted">{meta.desc}</div>
-            </div>
-            <div className="text-right shrink-0">
-              <div className={`text-[9px] font-bold px-2 py-0.5 rounded ${
-                isCritical ? 'bg-red-500/30 text-red-400' : 'bg-orange-500/20 text-orange-400'
-              }`}>
-                {isCritical ? 'CRITICAL' : 'WARNING'}
-              </div>
-            </div>
-          </div>
-        );
-      })}
-      {/* CSS animations injected */}
-      <style>{`
-        @keyframes shake {
-          0%, 100% { transform: translateX(0); }
-          10%, 30%, 50%, 70%, 90% { transform: translateX(-2px); }
-          20%, 40%, 60%, 80% { transform: translateX(2px); }
-        }
-        @keyframes fadeSlideIn {
-          from { opacity: 0; transform: translateY(-10px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
-    </div>
-  );
-}
-
-/** Animated balancing visualization with bleed pulse indicators */
-function BalancingPanel({ active, balancingMap }: { active: boolean; balancingMap: Record<string, boolean> }) {
-  const entries = Object.entries(balancingMap);
-  const bleedingCells = entries.filter(([, v]) => v);
-  const total = entries.length;
-  const [pulsePhase, setPulsePhase] = useState(0);
-
-  // Animated pulse for bleeding cells
-  useEffect(() => {
-    if (!active) return;
-    const id = setInterval(() => setPulsePhase((p) => (p + 1) % 3), 600);
-    return () => clearInterval(id);
-  }, [active]);
-
-  return (
-    <div className="bg-panel-surface rounded-xl p-4 border border-panel-border">
-      <div className="flex items-center justify-between mb-3">
-        <div className="text-xs font-semibold text-panel-text">Passive Cell Balancing</div>
-        <span className={`text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 ${
-          active ? 'bg-blue-500/20 text-blue-400' : 'bg-panel-bg text-panel-muted'
-        }`}>
-          {active && <span className="inline-block w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />}
-          {active ? 'ACTIVE' : 'IDLE'}
-        </span>
-      </div>
-
-      <div className="text-[10px] text-panel-muted mb-2">
-        {active
-          ? `Bleeding ${bleedingCells.length} of ${total} cells to equalize voltage`
-          : 'All cells balanced — no resistive bleeding needed'}
-      </div>
-
-      {/* Cell grid showing bleed state with animated pulses */}
-      <div className="grid grid-cols-6 gap-1.5">
-        {entries.map(([cellId, bleeding], idx) => (
-          <div
-            key={cellId}
-            className={`h-8 rounded text-[8px] font-mono flex flex-col items-center justify-center transition-all duration-300 relative ${
-              bleeding
-                ? 'bg-blue-500/30 text-blue-300 border border-blue-500/50 shadow-sm shadow-blue-500/20'
-                : 'bg-panel-bg text-panel-muted border border-transparent'
-            }`}
-            title={`${cellId}: ${bleeding ? 'Bleeding 50mA — dissipating excess energy' : 'Balanced'}`}
-          >
-            {cellId.replace('S', '').replace('_C', '.')}
-            {bleeding && (
-              <>
-                {/* Pulse ring animation */}
-                <div
-                  className="absolute inset-0 rounded border-2 border-blue-400/50"
-                  style={{
-                    animation: 'bleedPulse 1.2s ease-out infinite',
-                    animationDelay: `${(idx * 200) % 1200}ms`,
-                  }}
-                />
-                {/* Bleed current indicator */}
-                <div className="text-[6px] text-blue-300/80 leading-none">
-                  {['↓', '↕', '↓'][pulsePhase]}50mA
-                </div>
-              </>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {active && (
-        <div className="mt-3 space-y-1">
-          <div className="text-[9px] text-blue-400/70 flex items-center gap-1">
-            <span className="inline-block w-1.5 h-1.5 bg-blue-400 rounded-full animate-ping" />
-            Bleed resistor: 50 mA per cell — equalizing toward lowest voltage cell
-          </div>
-          <div className="flex items-center gap-2 mt-1">
-            <div className="flex-1 h-1 bg-panel-bg rounded-full">
-              <div
-                className="h-full bg-blue-400 rounded-full transition-all duration-1000"
-                style={{ width: `${(bleedingCells.length / Math.max(total, 1)) * 100}%` }}
-              />
-            </div>
-            <span className="text-[9px] text-blue-400">
-              {bleedingCells.length}/{total}
-            </span>
-          </div>
-        </div>
-      )}
-
-      <style>{`
-        @keyframes bleedPulse {
-          0% { transform: scale(1); opacity: 1; }
-          100% { transform: scale(1.3); opacity: 0; }
-        }
-      `}</style>
-    </div>
-  );
-}
-
-/** Fault history timeline */
-function FaultTimeline({ history }: { history: { fault: string; time_s: number; cleared: boolean }[] }) {
-  const recent = history.slice(-15).reverse();
-  if (recent.length === 0) return null;
-
-  return (
-    <div className="bg-panel-surface rounded-xl p-4 border border-panel-border">
-      <div className="text-xs font-semibold text-panel-text mb-2">Fault History</div>
-      <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-        {recent.map((entry, i) => {
-          const meta = FAULT_META[entry.fault] ?? { color: '#94a3b8', icon: '?' };
-          return (
-            <div
-              key={`${entry.fault}-${entry.time_s}-${i}`}
-              className="flex items-center gap-2 text-[11px]"
-              style={{ animation: 'fadeSlideIn 0.3s ease-out', animationDelay: `${i * 50}ms`, animationFillMode: 'both' }}
-            >
-              <span className="text-sm">{meta.icon}</span>
-              <span className={`flex-1 ${entry.cleared ? 'text-panel-muted line-through' : ''}`}
-                    style={{ color: entry.cleared ? undefined : meta.color }}>
-                {formatFault(entry.fault)}
-              </span>
-              <span className="text-panel-muted font-mono text-[10px]">{formatTime(entry.time_s)}</span>
-              {entry.cleared ? (
-                <span className="text-green-500 text-[9px] font-bold">CLEARED</span>
-              ) : (
-                <span className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: meta.color }} />
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/** Real-time Protection Actions — shows what BMS is actively doing and why */
-function ProtectionActions({ bms, cells, packMetrics }: {
-  bms: any;
-  cells: CellInfo[];
-  packMetrics: any;
-}) {
-  const actions: { icon: string; title: string; desc: string; color: string; active: boolean }[] = [];
-
-  // Contactor management
-  if (bms.contactor_closed) {
-    actions.push({
-      icon: '🔌', title: 'Contactor Engaged',
-      desc: 'Main contactor K1 closed — HV bus is live, current flowing to/from pack',
-      color: '#22c55e', active: true,
-    });
-  } else if (bms.precharge_active) {
-    actions.push({
-      icon: '⚡', title: 'Pre-Charge Active',
-      desc: 'Limiting inrush current through pre-charge resistor before closing main contactor',
-      color: '#eab308', active: true,
-    });
-  } else {
-    actions.push({
-      icon: '🛑', title: 'Contactor Open',
-      desc: 'HV bus disconnected — pack is isolated for safety',
-      color: '#ef4444', active: true,
-    });
-  }
-
-  // Cell balancing
-  if (bms.balancing_active) {
-    const bleedCount = Object.values(bms.balancing_map ?? {}).filter(Boolean).length;
-    actions.push({
-      icon: '⚖️', title: `Balancing ${bleedCount} Cells`,
-      desc: `Bleeding excess voltage from ${bleedCount} high-SOC cells at 50mA to equalize pack. Spread: ${packMetrics?.vSpread ?? '?'}mV`,
-      color: '#3b82f6', active: true,
-    });
-  }
-
-  // Voltage monitoring
-  const highVCells = cells.filter((c) => c.voltage > LIMITS.cellVMax);
-  const lowVCells = cells.filter((c) => c.voltage < LIMITS.cellVMin);
-  if (highVCells.length > 0) {
-    actions.push({
-      icon: '⬆️', title: `Over-Voltage: ${highVCells.length} cells`,
-      desc: `Cells exceeding ${LIMITS.cellVMax}V limit: ${highVCells.map((c) => c.cell_id).join(', ')}`,
-      color: '#eab308', active: true,
-    });
-  }
-  if (lowVCells.length > 0) {
-    actions.push({
-      icon: '⬇️', title: `Under-Voltage: ${lowVCells.length} cells`,
-      desc: `Cells below ${LIMITS.cellVMin}V limit: ${lowVCells.map((c) => c.cell_id).join(', ')}`,
-      color: '#eab308', active: true,
-    });
-  }
-
-  // Temperature monitoring
-  const hotCells = cells.filter((c) => c.temp_c > LIMITS.cellTempMax);
-  if (hotCells.length > 0) {
-    actions.push({
-      icon: '🌡️', title: `Over-Temp: ${hotCells.length} cells`,
-      desc: `Cells exceeding ${LIMITS.cellTempMax}°C: ${hotCells.map((c) => `${c.cell_id} (${c.temp_c.toFixed(1)}°C)`).join(', ')}`,
-      color: '#f97316', active: true,
-    });
-  }
-
-  // Nominal monitoring when no faults
-  if ((bms.active_faults ?? []).length === 0 && !bms.balancing_active) {
-    actions.push({
-      icon: '🔍', title: 'Monitoring',
-      desc: 'Continuously checking all cells for voltage/temperature/current violations every cycle',
-      color: '#22c55e', active: true,
-    });
-  }
-
-  return (
-    <div className="bg-panel-surface rounded-xl p-4 border border-panel-border">
-      <div className="text-xs font-semibold text-panel-text mb-3 flex items-center gap-2">
-        <span className="text-sm">🛡️</span>
-        Active Protection Actions
-        <span className="ml-auto text-[9px] text-panel-muted bg-panel-bg px-2 py-0.5 rounded">
-          {actions.length} active
-        </span>
-      </div>
-      <div className="space-y-2">
-        {actions.map((action, i) => (
-          <div
-            key={action.title}
-            className="flex items-start gap-2 bg-panel-bg rounded-lg p-2 border border-panel-border/50"
-            style={{ animation: 'fadeSlideIn 0.3s ease-out', animationDelay: `${i * 80}ms`, animationFillMode: 'both' }}
-          >
-            <span className="text-sm mt-0.5 shrink-0">{action.icon}</span>
-            <div className="flex-1 min-w-0">
-              <div className="text-[11px] font-semibold" style={{ color: action.color }}>
-                {action.title}
-              </div>
-              <div className="text-[9px] text-panel-muted leading-relaxed">{action.desc}</div>
-            </div>
-            <div
-              className="w-2 h-2 rounded-full shrink-0 mt-1"
-              style={{ backgroundColor: action.color, animation: action.active ? 'pulse 2s ease-in-out infinite' : 'none' }}
-            />
-          </div>
-        ))}
-      </div>
-      <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.3; }
-        }
-      `}</style>
-    </div>
-  );
-}
-
-/* ── Main BMSDashboard ─────────────────────────────────────── */
-
+/* ══════════════════════════════════════════════════════════════
+   MAIN DASHBOARD
+   ══════════════════════════════════════════════════════════════ */
 export default function BMSDashboard() {
-  const bms = useBatteryStore((s) => s.bmsStatus);
-  const packConfigured = useBatteryStore((s) => s.packConfigured);
+  const bms = useBatteryStore(s => s.bmsStatus);
+  const packConfigured = useBatteryStore(s => s.packConfigured);
   const [cells, setCells] = useState<CellInfo[]>([]);
   const [nSeries, setNSeries] = useState(0);
   const [nParallel, setNParallel] = useState(0);
 
   const fetchCells = useCallback(async () => {
     try {
-      const resp = await fetch(`${API_BASE}/pack/status`);
-      if (!resp.ok) return;
-      const json = await resp.json();
-      if (json.status === 'ok') {
-        setCells(json.cells ?? []);
-        setNSeries(json.n_series ?? 0);
-        setNParallel(json.n_parallel ?? 0);
-      }
-    } catch { /* ignore */ }
+      const r = await fetch(`${API}/pack/status`);
+      if (!r.ok) return;
+      const j = await r.json();
+      if (j.status === 'ok') { setCells(j.cells ?? []); setNSeries(j.n_series ?? 0); setNParallel(j.n_parallel ?? 0); }
+    } catch { /* */ }
   }, []);
 
   useEffect(() => {
     if (!packConfigured) return;
     fetchCells();
-    const id = setInterval(fetchCells, 1200);
+    const id = setInterval(fetchCells, 1000);
     return () => clearInterval(id);
   }, [packConfigured, fetchCells]);
 
-  // Derived pack metrics
-  const packMetrics = useMemo(() => {
+  const pm = useMemo(() => {
     if (cells.length === 0) return null;
-    const voltages = cells.map((c) => c.voltage);
-    const temps = cells.map((c) => c.temp_c);
-    const socs = cells.map((c) => c.soc);
-    const heats = cells.map((c) => c.heat_w);
-    const sohs = cells.map((c) => c.soh_pct);
-    const avgCurrent = cells[0]?.current ?? 0;
-
-    const totalVoltage = nSeries > 0 ? voltages.reduce((a, b) => a + b, 0) / nParallel : 0;
-
+    const vs = cells.map(c => c.voltage);
+    const ts = cells.map(c => c.temp_c);
+    const cur = cells[0]?.current ?? 0;
+    const totalV = nSeries > 0 ? vs.reduce((a, b) => a + b, 0) / nParallel : 0;
     return {
-      packVoltage: totalVoltage.toFixed(2),
-      packCurrent: (avgCurrent * nParallel).toFixed(1),
-      packPower: (totalVoltage * avgCurrent * nParallel).toFixed(1),
-      vMin: Math.min(...voltages).toFixed(3),
-      vMax: Math.max(...voltages).toFixed(3),
-      vSpread: ((Math.max(...voltages) - Math.min(...voltages)) * 1000).toFixed(1),
-      tMin: Math.min(...temps).toFixed(1),
-      tMax: Math.max(...temps).toFixed(1),
-      tSpread: (Math.max(...temps) - Math.min(...temps)).toFixed(2),
-      socMin: (Math.min(...socs) * 100).toFixed(1),
-      socMax: (Math.max(...socs) * 100).toFixed(1),
-      totalHeat: heats.reduce((a, b) => a + b, 0).toFixed(2),
-      sohMin: Math.min(...sohs).toFixed(1),
-      avgSoh: (sohs.reduce((a, b) => a + b, 0) / sohs.length).toFixed(1),
-      isCharging: avgCurrent < 0,
+      packVoltage: totalV, packCurrent: cur * nParallel, isCharging: cur < 0,
+      vMin: Math.min(...vs), vMax: Math.max(...vs), vSpread: ((Math.max(...vs) - Math.min(...vs)) * 1000).toFixed(1),
+      tMin: Math.min(...ts), tMax: Math.max(...ts), tSpread: (Math.max(...ts) - Math.min(...ts)).toFixed(2),
+      socMin: (Math.min(...cells.map(c => c.soc)) * 100).toFixed(1),
+      socMax: (Math.max(...cells.map(c => c.soc)) * 100).toFixed(1),
+      totalHeat: cells.map(c => c.heat_w).reduce((a, b) => a + b, 0),
+      avgSoh: (cells.map(c => c.soh_pct).reduce((a, b) => a + b, 0) / cells.length).toFixed(1),
     };
   }, [cells, nSeries, nParallel]);
 
-  /* ── Not configured state ─── */
+  /* ── Not configured ── */
   if (!packConfigured) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-panel-bg p-8">
-        <div className="text-center max-w-md">
-          <div className="text-5xl mb-4">🔋</div>
-          <h2 className="text-xl font-bold text-panel-text mb-2">No Pack Configured</h2>
+      <div className="flex-1 flex items-center justify-center bg-panel-bg p-6">
+        <div className="text-center max-w-sm">
+          <div className="text-5xl mb-3">🔋</div>
+          <h2 className="text-lg font-bold text-panel-text mb-2">No Pack Configured</h2>
           <p className="text-sm text-panel-muted mb-4">
-            The Battery Management System monitors pack-level safety, cell balancing, and contactor state.
-            Configure a multi-cell pack in the left panel to activate the BMS.
+            Configure a multi-cell pack in the left panel to activate BMS monitoring.
           </p>
-          <div className="grid grid-cols-3 gap-3 text-center">
-            <div className="bg-panel-surface rounded-lg p-3 border border-panel-border">
-              <div className="text-lg mb-1">⚡</div>
-              <div className="text-[10px] text-panel-muted">Voltage &amp; current fault protection</div>
-            </div>
-            <div className="bg-panel-surface rounded-lg p-3 border border-panel-border">
-              <div className="text-lg mb-1">🌡️</div>
-              <div className="text-[10px] text-panel-muted">Thermal runaway detection</div>
-            </div>
-            <div className="bg-panel-surface rounded-lg p-3 border border-panel-border">
-              <div className="text-lg mb-1">⚖️</div>
-              <div className="text-[10px] text-panel-muted">Passive cell balancing</div>
-            </div>
+          <div className="grid grid-cols-3 gap-2 text-center text-[10px]">
+            {[['⚡', 'Voltage & current fault protection'], ['🌡️', 'Thermal runaway detection'], ['⚖️', 'Passive cell balancing']].map(([ic, t]) => (
+              <div key={t} className="bg-panel-surface rounded-lg p-2 border border-panel-border">
+                <div className="text-lg mb-1">{ic}</div>
+                <div className="text-panel-muted">{t}</div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
     );
   }
 
-  /* ── Waiting for data ─── */
+  /* ── Loading ── */
   if (!bms || cells.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center bg-panel-bg">
-        <div className="text-panel-muted animate-pulse">Loading BMS data...</div>
+        <div className="text-panel-muted animate-pulse text-sm">Loading BMS data...</div>
       </div>
     );
   }
 
-  const activeFaults = bms.active_faults ?? [];
-  const faultHistory = bms.fault_history ?? [];
-
-  // Voltage domain: show a window around the actual values with limits visible
-  const allVoltages = cells.map((c) => c.voltage);
-  const vDomainMin = Math.min(LIMITS.cellVMin, ...allVoltages) - 0.1;
-  const vDomainMax = Math.max(LIMITS.cellVMax, ...allVoltages) + 0.1;
-
-  // Temperature domain
-  const allTemps = cells.map((c) => c.temp_c);
-  const tDomainMin = Math.min(0, ...allTemps) - 2;
-  const tDomainMax = Math.max(LIMITS.cellTempMax + 5, ...allTemps);
+  const faults = bms.active_faults ?? [];
+  const history = bms.fault_history ?? [];
+  const allV = cells.map(c => c.voltage);
+  const allT = cells.map(c => c.temp_c);
+  const vDom: [number, number] = [Math.min(LIMITS.cellVMin, ...allV) - 0.1, Math.max(LIMITS.cellVMax, ...allV) + 0.1];
+  const tDom: [number, number] = [Math.min(0, ...allT) - 2, Math.max(LIMITS.cellTempMax + 5, ...allT)];
 
   return (
-    <div className="flex-1 overflow-y-auto bg-panel-bg p-4 space-y-4">
-      {/* ── Header ─────────────────────────────────── */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-panel-text flex items-center gap-2">
-            <span className="text-xl">🛡️</span>
-            Battery Management System
-          </h2>
-          <p className="text-[11px] text-panel-muted">
-            {nSeries}S{nParallel}P · {cells.length} cells · Real-time pack safety monitoring
-          </p>
+    <div className="flex-1 flex flex-col bg-panel-bg overflow-hidden min-h-0">
+      <style>{GLOBAL_CSS}</style>
+
+      {/* ── Sticky Header + Fault Bar ── */}
+      <div className="shrink-0 px-3 pt-2 pb-1.5 space-y-1.5 border-b border-panel-border/30">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-bold text-panel-text flex items-center gap-2">
+              🛡️ Battery Management System
+            </h2>
+            <p className="text-[10px] text-panel-muted">
+              {nSeries}S{nParallel}P · {cells.length} cells · Live pack safety monitoring
+            </p>
+          </div>
+          <div className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 ${
+            faults.length > 0 ? 'bg-red-500/20 text-red-400' : 'bg-green-500/15 text-green-400'
+          }`}>
+            <span className="w-2 h-2 rounded-full" style={{
+              background: faults.length > 0 ? '#ef4444' : '#22c55e',
+              animation: 'livePing 1.5s infinite',
+            }} />
+            {faults.length > 0 ? `${faults.length} FAULT${faults.length > 1 ? 'S' : ''}` : 'NOMINAL'}
+          </div>
         </div>
-        <div className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
-          activeFaults.length > 0 ? 'bg-red-500/20 text-red-400 animate-pulse' : 'bg-green-500/20 text-green-400'
-        }`}>
-          {activeFaults.length > 0 ? `${activeFaults.length} FAULT${activeFaults.length > 1 ? 'S' : ''}` : 'NOMINAL'}
-        </div>
+        <FaultBar faults={faults} />
       </div>
 
-      {/* ── Active Faults (prominent, top of page) ── */}
-      <FaultAlerts faults={activeFaults} />
+      {/* ── Scrollable content area ── */}
+      <div className="flex-1 overflow-y-auto min-h-0 p-2.5 space-y-2">
 
-      {/* ── Pack Overview Cards ────────────────────── */}
-      {packMetrics && (
-        <div className="flex flex-wrap gap-3">
-          <PackOverviewCard
-            label="Pack Voltage"
-            value={packMetrics.packVoltage}
-            unit="V"
-            color="#3b82f6"
-            sub={`${packMetrics.vMin} – ${packMetrics.vMax} V · Δ${packMetrics.vSpread} mV`}
-          />
-          <PackOverviewCard
-            label="Pack Current"
-            value={packMetrics.packCurrent}
-            unit="A"
-            color={packMetrics.isCharging ? '#3b82f6' : '#ef4444'}
-            sub={packMetrics.isCharging ? 'Charging' : 'Discharging'}
-          />
-          <PackOverviewCard
-            label="Pack Power"
-            value={Math.abs(parseFloat(packMetrics.packPower)).toFixed(0)}
-            unit="W"
-            color="#a855f7"
-          />
-          <PackOverviewCard
-            label="Temp Range"
-            value={`${packMetrics.tMin}–${packMetrics.tMax}`}
-            unit="°C"
-            color="#f97316"
-            sub={`ΔT: ${packMetrics.tSpread}°C`}
-          />
-          <PackOverviewCard
-            label="SOC Range"
-            value={`${packMetrics.socMin}–${packMetrics.socMax}`}
-            unit="%"
-            color="#22c55e"
-          />
-          <PackOverviewCard
-            label="Pack Heat"
-            value={packMetrics.totalHeat}
-            unit="W"
-            color="#f97316"
-          />
+        {/* Row 1: Pack overview stats */}
+        {pm && (
+          <div className="grid grid-cols-3 lg:grid-cols-6 gap-1.5">
+            <Stat label="Pack Voltage" value={pm.packVoltage.toFixed(1)} unit="V" color="#3b82f6"
+                  sub={`${pm.vMin.toFixed(2)}–${pm.vMax.toFixed(2)}V`}
+                  pulse={faults.includes('OVER_VOLTAGE') || faults.includes('UNDER_VOLTAGE')} />
+            <Stat label="Current" value={Math.abs(pm.packCurrent).toFixed(1)} unit="A"
+                  color={pm.isCharging ? '#3b82f6' : '#ef4444'} sub={pm.isCharging ? '← Charging' : '→ Discharging'}
+                  pulse={faults.includes('OVER_CURRENT')} />
+            <Stat label="Power" value={Math.abs(pm.packVoltage * pm.packCurrent).toFixed(0)} unit="W" color="#a855f7" />
+            <Stat label="Temp Range" value={`${pm.tMin.toFixed(0)}–${pm.tMax.toFixed(0)}`} unit="°C" color="#f97316"
+                  sub={`ΔT ${pm.tSpread}°C`} pulse={faults.includes('OVER_TEMP') || faults.includes('THERMAL_RUNAWAY')} />
+            <Stat label="SOC Range" value={`${pm.socMin}–${pm.socMax}`} unit="%" color="#22c55e" />
+            <Stat label="Avg SOH" value={pm.avgSoh} unit="%" color="#06b6d4" sub={`Heat: ${pm.totalHeat.toFixed(1)}W`} />
+          </div>
+        )}
+
+        {/* Row 2: Contactor circuit diagram (full width centerpiece) */}
+        <CircuitContactor
+          closed={bms.contactor_closed}
+          precharge={bms.precharge_active}
+          current={pm?.packCurrent ?? 0}
+          voltage={pm?.packVoltage ?? 0}
+          isCharging={pm?.isCharging ?? false}
+        />
+
+        {/* Row 3: Cell bar charts (2×2 grid) */}
+        <div className="grid grid-cols-2 gap-1.5">
+          <CellBars cells={cells} get={c => c.voltage} label="⚡ Cell Voltages" unit="V" color="#3b82f6"
+                    domain={vDom} limits={[{ at: LIMITS.cellVMax, color: '#ef4444', tag: 'OV' }, { at: LIMITS.cellVMin, color: '#eab308', tag: 'UV' }]} />
+          <CellBars cells={cells} get={c => c.temp_c} label="🌡️ Cell Temperatures" unit="°C" color="#f97316"
+                    domain={tDom} limits={[{ at: LIMITS.cellTempMax, color: '#f97316', tag: 'Over' }, { at: LIMITS.cellTempCritical, color: '#ef4444', tag: 'Crit' }]} />
+          <CellBars cells={cells} get={c => c.soc * 100} label="🔋 Cell SOC" unit="%" color="#22c55e" domain={[0, 100]} />
+          <CellBars cells={cells} get={c => c.soh_pct} label="💚 Cell SOH" unit="%" color="#06b6d4" domain={[70, 100]} />
         </div>
-      )}
 
-      {/* ── Charts Row ─────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Per-cell Voltage */}
-        <CellBarChart
-          cells={cells}
-          accessor={(c) => c.voltage}
-          label="Cell Voltages"
-          unit="V"
-          color="#3b82f6"
-          domain={[vDomainMin, vDomainMax]}
-          limits={[
-            { value: LIMITS.cellVMax, color: '#ef4444', label: 'OV Limit' },
-            { value: LIMITS.cellVMin, color: '#eab308', label: 'UV Limit' },
-          ]}
-        />
-
-        {/* Per-cell Temperature */}
-        <CellBarChart
-          cells={cells}
-          accessor={(c) => c.temp_c}
-          label="Cell Temperatures"
-          unit="°C"
-          color="#f97316"
-          domain={[tDomainMin, tDomainMax]}
-          limits={[
-            { value: LIMITS.cellTempMax, color: '#f97316', label: 'Over-Temp' },
-            { value: LIMITS.cellTempCritical, color: '#ef4444', label: 'Critical' },
-          ]}
-        />
-
-        {/* Per-cell SOC */}
-        <CellBarChart
-          cells={cells}
-          accessor={(c) => c.soc * 100}
-          label="Cell SOC"
-          unit="%"
-          color="#22c55e"
-          domain={[0, 100]}
-        />
-
-        {/* Per-cell SOH */}
-        <CellBarChart
-          cells={cells}
-          accessor={(c) => c.soh_pct}
-          label="Cell SOH"
-          unit="%"
-          color="#06b6d4"
-          domain={[70, 100]}
-        />
-      </div>
-
-      {/* ── Contactor + Balancing + Protection Row ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <ContactorDiagram closed={bms.contactor_closed} precharge={bms.precharge_active} />
-        <BalancingPanel active={bms.balancing_active} balancingMap={bms.balancing_map ?? {}} />
-        <ProtectionActions bms={bms} cells={cells} packMetrics={packMetrics} />
-      </div>
-
-      {/* ── Fault History ──────────────────────────── */}
-      <FaultTimeline history={faultHistory} />
-
-      {/* ── Safety Limits Reference ────────────────── */}
-      <div className="bg-panel-surface rounded-xl p-4 border border-panel-border">
-        <div className="text-xs font-semibold text-panel-text mb-2">BMS Safety Configuration</div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-[10px]">
-          <div>
-            <span className="text-panel-muted">Cell V max:</span>{' '}
-            <span className="text-panel-text font-mono">{LIMITS.cellVMax} V</span>
-          </div>
-          <div>
-            <span className="text-panel-muted">Cell V min:</span>{' '}
-            <span className="text-panel-text font-mono">{LIMITS.cellVMin} V</span>
-          </div>
-          <div>
-            <span className="text-panel-muted">Temp max:</span>{' '}
-            <span className="text-panel-text font-mono">{LIMITS.cellTempMax}°C</span>
-          </div>
-          <div>
-            <span className="text-panel-muted">Temp critical:</span>{' '}
-            <span className="text-panel-text font-mono">{LIMITS.cellTempCritical}°C</span>
-          </div>
-          <div>
-            <span className="text-panel-muted">Pack I max:</span>{' '}
-            <span className="text-panel-text font-mono">{LIMITS.packCurrentMax} A</span>
-          </div>
-          <div>
-            <span className="text-panel-muted">Imbalance:</span>{' '}
-            <span className="text-panel-text font-mono">{LIMITS.imbalanceVThreshold * 1000} mV</span>
-          </div>
-          <div>
-            <span className="text-panel-muted">Balancing bleed:</span>{' '}
-            <span className="text-panel-text font-mono">50 mA</span>
-          </div>
-          <div>
-            <span className="text-panel-muted">Pre-charge:</span>{' '}
-            <span className="text-panel-text font-mono">2.0 s</span>
-          </div>
+        {/* Row 4: Balancing + Protection + Fault Log */}
+        <div className="grid grid-cols-3 gap-1.5">
+          <BalancingGrid active={bms.balancing_active} map={bms.balancing_map ?? {}} />
+          <ProtectionStatus bms={bms} cells={cells} packMetrics={pm} />
+          <FaultLog history={history} />
         </div>
+
+        {/* Collapsible safety reference */}
+        <SafetyRef />
       </div>
     </div>
   );

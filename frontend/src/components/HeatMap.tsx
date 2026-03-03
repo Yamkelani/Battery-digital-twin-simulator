@@ -4,12 +4,18 @@
  * Renders a 3D heat map overlay on the battery cell showing
  * temperature distribution from core to surface.
  *
- * Uses a grid of colored boxes where color represents temperature:
+ * Uses a grid of colored tiles where color represents temperature:
  *   - Blue: cold (< 20°C)
  *   - Green: normal (25°C)
  *   - Yellow: warm (35°C)
  *   - Orange: hot (45°C)
  *   - Red: critical (> 55°C)
+ *
+ * Tile opacity is driven by:
+ *   - Temperature deviation from ambient
+ *   - Active heat generation rate (ohmic + polarization + entropic)
+ * The map shows realistic thermal asymmetry: terminals (top) glow hotter
+ * due to tab-welding resistance, edges are cooler from convection.
  */
 
 import { useMemo } from 'react';
@@ -26,17 +32,21 @@ export default function HeatMap() {
 
   const cellW = 0.091 * SCALE;
   const cellH = 0.148 * SCALE;
+  const cellD = 0.027 * SCALE;
 
   const tempCore = batteryState?.thermal_T_core_c ?? 25;
   const tempSurface = batteryState?.thermal_T_surface_c ?? 25;
   const gradient = batteryState?.thermal_gradient_c ?? 0;
+  const heatGenW = batteryState?.heat_total_w ?? 0;
+  const heatOhmic = batteryState?.heat_ohmic_w ?? 0;
 
-  // Generate heat map grid
+  // Generate heat map grid — now uses heat generation for opacity too
   const heatData = useMemo(() => {
     const cells: Array<{
       position: [number, number, number];
       color: string;
       opacity: number;
+      emissiveIntensity: number;
     }> = [];
 
     const tileW = (cellW * 0.95) / GRID_X;
@@ -53,29 +63,43 @@ export default function HeatMap() {
         const cy = (iy - GRID_Y / 2) / (GRID_Y / 2);
         const distFromCenter = Math.sqrt(cx * cx + cy * cy) / Math.SQRT2;
 
-        // Temperature at this point: parabolic profile from core to surface
-        const temp = tempCore - (tempCore - tempSurface) * distFromCenter * distFromCenter;
+        // Terminal proximity factor — tabs at top = more ohmic heat there
+        const terminalProximity = Math.max(0, (iy / GRID_Y - 0.7)) * 3.3; // top 30% of cell
+        const tabHeatBias = terminalProximity * Math.min(heatOhmic / 3, 1);
 
-        // Opacity based on how different from ambient
+        // Temperature at this point: parabolic profile from core to surface
+        // Plus extra heat near current collector tabs at top
+        const baseTemp = tempCore - (tempCore - tempSurface) * distFromCenter * distFromCenter;
+        const temp = baseTemp + tabHeatBias * 3; // up to +3°C at tabs
+
+        // Opacity driven by BOTH temperature deviation and active heat generation
         const tempDiff = Math.abs(temp - 25);
-        const opacity = Math.min(0.15 + tempDiff / 35 * 0.5, 0.6);
+        const heatActivity = Math.min(heatGenW / 5, 1.0);  // 5W = fully active
+        const opacity = Math.min(
+          0.12 + tempDiff / 25 * 0.45 + heatActivity * 0.15,
+          0.75,
+        );
+
+        // Emissive glow: more intense where heat is being generated
+        const emGlow = 0.2 + heatActivity * 0.4 + tabHeatBias * 0.2;
 
         cells.push({
           position: [x, y, 0],
           color: tempToColor(temp),
           opacity,
+          emissiveIntensity: emGlow,
         });
       }
     }
 
     return { cells, tileW, tileH };
-  }, [tempCore, tempSurface, cellW, cellH]);
+  }, [tempCore, tempSurface, cellW, cellH, heatGenW, heatOhmic]);
 
-  // Only render if there's a meaningful temperature gradient
-  if (Math.abs(tempCore - 25) < 0.5 && gradient < 0.1) return null;
+  // Only render if there's a meaningful temperature signal
+  if (Math.abs(tempCore - 25) < 0.3 && gradient < 0.05 && heatGenW < 0.05) return null;
 
   return (
-    <group position={[0, 0, 0.091 * SCALE / 2 * 0.5 + 0.02]}>
+    <group position={[0, 0, cellD * 0.5 + 0.02]}>
       {heatData.cells.map((cell, i) => (
         <mesh key={i} position={cell.position as any}>
           <planeGeometry args={[heatData.tileW * 0.95, heatData.tileH * 0.95]} />
@@ -84,7 +108,7 @@ export default function HeatMap() {
             transparent
             opacity={cell.opacity}
             emissive={cell.color}
-            emissiveIntensity={0.3}
+            emissiveIntensity={cell.emissiveIntensity}
             side={THREE.DoubleSide}
             depthWrite={false}
           />

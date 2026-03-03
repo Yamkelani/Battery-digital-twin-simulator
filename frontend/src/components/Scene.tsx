@@ -89,9 +89,14 @@ function FocusedCellView({ cellId }: { cellId: string }) {
         setCellState({
           soc: cell.soc,
           tempC: cell.temp_c,
+          tempSurfaceC: cell.temp_surface_c,
           soh: cell.soh_pct,
           seiLoss: cell.sei_loss_pct ?? 0,
+          platingLoss: cell.plating_loss_pct ?? 0,
           current: cell.current ?? 0,
+          resistanceFactor: cell.resistance_factor ?? 1.0,
+          cycleLoss: cell.cycle_loss_pct ?? 0,
+          heatGenW: cell.heat_w ?? 0,
         });
       }
     } catch {
@@ -183,7 +188,7 @@ export default function Scene() {
   if (webglError) {
     return (
       <div style={{
-        width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
+        position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center', background: '#0a0f1e', color: '#e2e8f0',
         gap: 16, fontFamily: 'system-ui',
       }}>
@@ -203,7 +208,7 @@ export default function Scene() {
   }
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+    <div style={{ position: 'absolute', inset: 0 }}>
       {/* Back button overlay when viewing a single cell from the pack */}
       {focusedCellId && (
         <button

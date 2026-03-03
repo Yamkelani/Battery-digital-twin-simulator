@@ -408,7 +408,7 @@ async def configure_pack(req: PackConfigRequest) -> Dict[str, Any]:
         capacity_variation_pct=req.variation_pct,
         enable_thermal=req.enable_thermal_coupling,
         enable_degradation=True,
-        degradation_time_factor=500.0,
+        degradation_time_factor=100.0,
     )
     pack = BatteryPack(cfg)
     set_pack(pack)
@@ -525,3 +525,271 @@ async def get_rul_prediction() -> Dict[str, Any]:
         "is_eol": deg.is_end_of_life,
         "efficiency": efficiency,
     })
+
+
+# ─── ML Dataset Export Endpoints ─────────────────────────────────────────────
+
+class MLDatasetRequest(BaseModel):
+    """Configuration for ML dataset generation."""
+    num_cycles: int = Field(100, ge=1, le=5000, description="Number of charge/discharge cycles to simulate")
+    sample_interval_s: float = Field(10.0, ge=1.0, le=300.0, description="Sampling interval in seconds")
+    c_rate: float = Field(1.0, ge=0.1, le=5.0, description="C-rate for cycling")
+    temperature_c: float = Field(25.0, ge=-10.0, le=60.0, description="Ambient temperature")
+    soc_upper: float = Field(1.0, ge=0.5, le=1.0, description="Upper SOC limit")
+    soc_lower: float = Field(0.1, ge=0.0, le=0.5, description="Lower SOC limit")
+    include_eis: bool = Field(False, description="Include EIS impedance snapshots per cycle")
+    capacity_ah: float = Field(50.0, ge=1.0, le=500.0, description="Cell capacity")
+    noise_sigma: float = Field(0.001, ge=0.0, le=0.05, description="Gaussian noise std for voltage/temp sensors")
+    format: str = Field("csv", description="Output format: csv or json")
+
+
+@router.post("/export/ml-dataset")
+async def export_ml_dataset(req: MLDatasetRequest):
+    """
+    Generate a comprehensive ML-ready battery cycling dataset.
+
+    Produces a time-series dataset with features suitable for training:
+    - SOH/RUL prediction models
+    - Anomaly detection on voltage/temperature
+    - SEI growth / plating onset classifiers
+    - Coulombic efficiency degradation models
+
+    Columns:
+      cycle, step, time_s, current_a, voltage_v, soc, temperature_c,
+      soh_pct, sei_loss_pct, cycle_loss_pct, plating_loss_pct,
+      resistance_factor, capacity_retention, ah_throughput,
+      energy_wh, heat_gen_w, dv_dt, di_dt, impedance_re, impedance_im,
+      rul_cycles, is_charging, c_rate, dod
+    """
+    import random
+    from models.battery_cell import BatteryCell, BatteryCellConfig
+
+    rng = random.Random(42)
+    cell_cfg = BatteryCellConfig(
+        nominal_capacity_ah=req.capacity_ah,
+        initial_soc=req.soc_upper,
+        initial_temperature_c=req.temperature_c,
+        enable_thermal=True,
+        enable_degradation=True,
+        enable_electrochemical=True,
+        degradation_time_factor=100.0,  # accelerated aging
+    )
+    cell = BatteryCell(cell_cfg)
+
+    dt = 1.0  # physics step
+    output_interval = max(1, int(req.sample_interval_s / dt))
+    discharge_current = req.c_rate * req.capacity_ah
+    charge_current = -req.c_rate * req.capacity_ah * 0.8  # charge slightly slower
+
+    rows: list = []
+    step_global = 0
+    prev_voltage = 0.0
+    prev_current = 0.0
+
+    for cycle in range(1, req.num_cycles + 1):
+        # ── Discharge phase ──
+        phase_steps = 0
+        while cell.ecm.soc > req.soc_lower and phase_steps < 20000:
+            result = cell.step(discharge_current, dt)
+            step_global += 1
+            phase_steps += 1
+
+            if phase_steps % output_interval == 0:
+                v = result["voltage"] + rng.gauss(0, req.noise_sigma)
+                tc = (result.get("thermal_T_core_c", req.temperature_c)
+                      + rng.gauss(0, req.noise_sigma * 5))
+                dv_dt = (v - prev_voltage) / req.sample_interval_s if prev_voltage else 0
+                di_dt = (discharge_current - prev_current) / req.sample_interval_s
+                prev_voltage = v
+                prev_current = discharge_current
+                deg = result
+                rows.append({
+                    "cycle": cycle,
+                    "step": step_global,
+                    "time_s": round(step_global * dt, 2),
+                    "current_a": round(discharge_current, 4),
+                    "voltage_v": round(v, 6),
+                    "soc": round(result["soc"], 6),
+                    "temperature_c": round(tc, 3),
+                    "soh_pct": round(deg.get("deg_soh_pct", 100), 4),
+                    "sei_loss_pct": round(deg.get("deg_sei_loss_pct", 0), 6),
+                    "cycle_loss_pct": round(deg.get("deg_cycle_loss_pct", 0), 6),
+                    "plating_loss_pct": round(deg.get("deg_plating_loss_pct", 0), 6),
+                    "resistance_factor": round(deg.get("deg_resistance_factor", 1.0), 6),
+                    "capacity_retention": round(deg.get("deg_capacity_retention", 1.0), 6),
+                    "ah_throughput": round(deg.get("deg_total_ah_throughput", 0), 4),
+                    "energy_wh": round(deg.get("deg_total_energy_wh", 0), 4),
+                    "heat_gen_w": round(deg.get("heat_total_w", 0), 4),
+                    "dv_dt": round(dv_dt, 8),
+                    "di_dt": round(di_dt, 8),
+                    "rul_cycles": round(deg.get("deg_remaining_cycles", 0), 2),
+                    "is_charging": 0,
+                    "c_rate": round(abs(discharge_current) / req.capacity_ah, 3),
+                    "dod": round(req.soc_upper - result["soc"], 4),
+                })
+
+        # ── Charge phase (CC-CV simplified) ──
+        phase_steps = 0
+        while cell.ecm.soc < req.soc_upper and phase_steps < 20000:
+            # Simple CC → CV transition at 4.15V
+            v_now = cell.ecm.terminal_voltage(cell.ecm.state, charge_current, cell.thermal.T_core)
+            if v_now > 4.15:
+                # CV mode: taper current
+                i_charge = charge_current * max(0.1, (req.soc_upper - cell.ecm.soc) * 5)
+            else:
+                i_charge = charge_current
+
+            result = cell.step(i_charge, dt)
+            step_global += 1
+            phase_steps += 1
+
+            if phase_steps % output_interval == 0:
+                v = result["voltage"] + rng.gauss(0, req.noise_sigma)
+                tc = (result.get("thermal_T_core_c", req.temperature_c)
+                      + rng.gauss(0, req.noise_sigma * 5))
+                dv_dt = (v - prev_voltage) / req.sample_interval_s if prev_voltage else 0
+                di_dt = (i_charge - prev_current) / req.sample_interval_s
+                prev_voltage = v
+                prev_current = i_charge
+                deg = result
+                rows.append({
+                    "cycle": cycle,
+                    "step": step_global,
+                    "time_s": round(step_global * dt, 2),
+                    "current_a": round(i_charge, 4),
+                    "voltage_v": round(v, 6),
+                    "soc": round(result["soc"], 6),
+                    "temperature_c": round(tc, 3),
+                    "soh_pct": round(deg.get("deg_soh_pct", 100), 4),
+                    "sei_loss_pct": round(deg.get("deg_sei_loss_pct", 0), 6),
+                    "cycle_loss_pct": round(deg.get("deg_cycle_loss_pct", 0), 6),
+                    "plating_loss_pct": round(deg.get("deg_plating_loss_pct", 0), 6),
+                    "resistance_factor": round(deg.get("deg_resistance_factor", 1.0), 6),
+                    "capacity_retention": round(deg.get("deg_capacity_retention", 1.0), 6),
+                    "ah_throughput": round(deg.get("deg_total_ah_throughput", 0), 4),
+                    "energy_wh": round(deg.get("deg_total_energy_wh", 0), 4),
+                    "heat_gen_w": round(deg.get("heat_total_w", 0), 4),
+                    "dv_dt": round(dv_dt, 8),
+                    "di_dt": round(di_dt, 8),
+                    "rul_cycles": round(deg.get("deg_remaining_cycles", 0), 2),
+                    "is_charging": 1,
+                    "c_rate": round(abs(i_charge) / req.capacity_ah, 3),
+                    "dod": round(req.soc_upper - result["soc"], 4),
+                })
+
+        # Optional: EIS snapshot at end of each cycle
+        if req.include_eis and cycle % max(1, req.num_cycles // 20) == 0:
+            T_k = req.temperature_c + 273.15
+            eis = cell.ecm.impedance_spectrum(T=T_k)
+            for z_re, z_im in zip(eis.get("Z_real", []), eis.get("Z_imag", [])):
+                rows.append({
+                    "cycle": cycle,
+                    "step": step_global,
+                    "time_s": round(step_global * dt, 2),
+                    "current_a": 0,
+                    "voltage_v": round(prev_voltage, 6),
+                    "soc": round(cell.ecm.soc, 6),
+                    "temperature_c": round(req.temperature_c, 3),
+                    "soh_pct": round(cell.degradation.state_of_health, 4),
+                    "sei_loss_pct": round(cell.degradation.sei_capacity_loss * 100, 6),
+                    "cycle_loss_pct": round(cell.degradation.cycle_capacity_loss * 100, 6),
+                    "plating_loss_pct": round(cell.degradation.plating_capacity_loss * 100, 6),
+                    "resistance_factor": round(cell.degradation.resistance_factor, 6),
+                    "capacity_retention": round(cell.degradation.capacity_retention, 6),
+                    "ah_throughput": round(cell.degradation.total_ah_throughput, 4),
+                    "energy_wh": round(cell.degradation.total_energy_wh, 4),
+                    "heat_gen_w": 0,
+                    "dv_dt": 0,
+                    "di_dt": 0,
+                    "rul_cycles": round(cell.degradation.remaining_useful_life_cycles, 2),
+                    "is_charging": -1,  # EIS marker
+                    "c_rate": 0,
+                    "dod": 0,
+                    "impedance_re": round(float(z_re), 8),
+                    "impedance_im": round(float(z_im), 8),
+                })
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="No data generated — check parameters")
+
+    if req.format == "json":
+        return JSONResponse(
+            content={"columns": list(rows[0].keys()), "data": rows, "num_rows": len(rows),
+                     "num_cycles": req.num_cycles, "config": req.model_dump()},
+            headers={"Content-Disposition": "attachment; filename=battery_ml_dataset.json"},
+        )
+
+    # CSV output
+    columns = list(rows[0].keys())
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=columns, extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        clean = {}
+        for c in columns:
+            val = row.get(c, "")
+            if isinstance(val, (np.integer,)):
+                val = int(val)
+            elif isinstance(val, (np.floating,)):
+                val = float(val)
+            clean[c] = val
+        writer.writerow(clean)
+
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=battery_ml_dataset.csv"},
+    )
+
+
+@router.get("/export/ml-dataset/schema")
+async def ml_dataset_schema():
+    """Return the column schema and descriptions for the ML dataset."""
+    return {
+        "columns": {
+            "cycle": "Charge/discharge cycle number (1-indexed)",
+            "step": "Global simulation step counter",
+            "time_s": "Elapsed simulation time in seconds",
+            "current_a": "Applied current [A] (positive=discharge, negative=charge)",
+            "voltage_v": "Terminal voltage [V] with optional sensor noise",
+            "soc": "State of Charge [0-1]",
+            "temperature_c": "Cell temperature [°C] with optional sensor noise",
+            "soh_pct": "State of Health [%]",
+            "sei_loss_pct": "Capacity loss from SEI growth [%]",
+            "cycle_loss_pct": "Capacity loss from cycling degradation [%]",
+            "plating_loss_pct": "Capacity loss from lithium plating [%]",
+            "resistance_factor": "Internal resistance increase factor (1.0=fresh)",
+            "capacity_retention": "Remaining capacity fraction (1.0=fresh)",
+            "ah_throughput": "Cumulative Ah throughput [Ah]",
+            "energy_wh": "Cumulative energy throughput [Wh]",
+            "heat_gen_w": "Heat generation [W]",
+            "dv_dt": "Voltage rate of change [V/s]",
+            "di_dt": "Current rate of change [A/s]",
+            "rul_cycles": "Estimated remaining useful life [cycles]",
+            "is_charging": "Phase indicator: 0=discharge, 1=charge, -1=EIS measurement",
+            "c_rate": "C-rate magnitude",
+            "dod": "Depth of discharge since last full charge",
+            "impedance_re": "EIS real impedance [Ohm] (only in EIS rows)",
+            "impedance_im": "EIS imaginary impedance [Ohm] (only in EIS rows)",
+        },
+        "ml_targets": {
+            "soh_prediction": "Use soh_pct as target, features: voltage_v, current_a, temperature_c, ah_throughput, cycle",
+            "rul_prediction": "Use rul_cycles as target, features: soh_pct, resistance_factor, ah_throughput, cycle, dod",
+            "anomaly_detection": "Features: voltage_v, temperature_c, dv_dt, heat_gen_w — detect outliers",
+            "degradation_mode": "Multi-output: sei_loss_pct, cycle_loss_pct, plating_loss_pct as targets",
+            "capacity_estimation": "Use capacity_retention as target from EIS features: impedance_re, impedance_im",
+        },
+        "example_request": {
+            "num_cycles": 200,
+            "sample_interval_s": 10,
+            "c_rate": 1.0,
+            "temperature_c": 25,
+            "soc_upper": 1.0,
+            "soc_lower": 0.1,
+            "include_eis": True,
+            "capacity_ah": 50,
+            "noise_sigma": 0.002,
+            "format": "csv"
+        }
+    }

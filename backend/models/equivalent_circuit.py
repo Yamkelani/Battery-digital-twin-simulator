@@ -146,8 +146,8 @@ class EquivalentCircuitModel:
         R0, R1, R2 = self.get_resistances(T)
         C1, C2 = self.params.C1_ref, self.params.C2_ref
 
-        # Effective capacity considering degradation
-        Q_eff = self.params.capacity_ah * capacity_factor
+        # Effective capacity considering degradation (clamp to prevent division by zero)
+        Q_eff = max(self.params.capacity_ah * capacity_factor, 0.1)
 
         # State derivatives
         dsoc_dt = -current / (Q_eff * 3600.0)  # Coulomb counting

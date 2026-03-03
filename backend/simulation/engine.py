@@ -283,13 +283,29 @@ class SimulationEngine:
                     from api.routes import get_pack, get_bms
                     pack = get_pack()
                     if pack is not None:
-                        pack.step(current, config.dt)
+                        pack_result = pack.step(current, config.dt)
+                        # Include lightweight per-cell summaries so the frontend
+                        # gets real-time pack data via WS instead of REST polling.
+                        step_result['pack_cells'] = pack.get_cell_summary()
+                        step_result['pack_thermal_links'] = pack.get_thermal_links()
+                        step_result['pack_n_series'] = pack.config.n_series
+                        step_result['pack_n_parallel'] = pack.config.n_parallel
+                        step_result['pack_n_cells'] = pack.n_cells
+                        # Pack-level aggregates
+                        step_result['pack_voltage'] = pack_result.get('pack_voltage')
+                        step_result['pack_power_w'] = pack_result.get('pack_power_w')
+                        step_result['pack_soc_mean'] = pack_result.get('soc_mean')
+                        step_result['pack_soh_mean'] = pack_result.get('soh_mean_pct')
+                        step_result['pack_temp_max'] = pack_result.get('temp_max_c')
+
                     bms = get_bms()
                     if bms is not None:
                         bms_status = bms.evaluate(current, self._sim_time)
                         step_result['bms'] = bms_status
-                except Exception:
-                    pass
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    print(f"[ENGINE] Pack/BMS step error: {e}")
 
                 self._sim_time += config.dt
                 output_accumulator += config.dt

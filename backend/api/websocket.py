@@ -25,6 +25,32 @@ _simulation_task: asyncio.Task = None
 _user_stopped: bool = False    # True after explicit "stop"; prevents auto-restart
 
 
+async def _cancel_simulation(engine):
+    """Properly cancel any running simulation task and clean up."""
+    global _simulation_task
+    if _simulation_task is not None:
+        if not _simulation_task.done():
+            engine.state = engine.state.__class__("completed")
+            if hasattr(engine, '_pause_event'):
+                engine._pause_event.set()
+            _simulation_task.cancel()
+            try:
+                await _simulation_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        _simulation_task = None
+
+
+def _reset_energy_tracking(engine):
+    """Reset cumulative energy / efficiency counters on the engine."""
+    engine._charge_ah_in = 0.0
+    engine._discharge_ah_out = 0.0
+    engine._charge_energy_in = 0.0
+    engine._discharge_energy_out = 0.0
+    engine._coulombic_eff = 0.0
+    engine._energy_eff = 0.0
+
+
 def _convert_numpy(obj):
     """Recursively convert numpy types to native Python types for JSON serialization."""
     if isinstance(obj, dict):
@@ -123,7 +149,7 @@ async def simulation_websocket(websocket: WebSocket):
     # Auto-start simulation on first connection (unless user explicitly stopped)
     if (not _simulation_task or _simulation_task.done()) and not _user_stopped:
         engine.reset(0.8, 25.0, False)          # fresh state
-        engine.cell.config.degradation_time_factor = 500.0  # accelerated aging
+        engine.cell.config.degradation_time_factor = 100.0  # accelerated aging
         engine.set_callback(broadcast)
         if not engine._profile:
             engine.set_profile("constant_discharge", c_rate=0.5)
@@ -153,6 +179,17 @@ async def simulation_websocket(websocket: WebSocket):
                     await websocket.send_json({"type": "error", "message": "Simulation already running"})
                     continue
 
+                # Clean up any finished task reference
+                _simulation_task = None
+
+                # Reset sim time & engine state so the profile starts fresh
+                engine._sim_time = 0.0
+                engine.state = engine.state.__class__("idle")
+                _reset_energy_tracking(engine)
+
+                # Ensure accelerated aging is set
+                engine.cell.config.degradation_time_factor = 100.0
+
                 # Ensure a profile is set
                 if not engine._profile:
                     engine.set_profile("constant_discharge", c_rate=0.5)
@@ -175,32 +212,33 @@ async def simulation_websocket(websocket: WebSocket):
             elif action == "stop":
                 # Fully stop the simulation (cancel the background task)
                 _user_stopped = True
-                if _simulation_task and not _simulation_task.done():
-                    engine.state = engine.state.__class__("completed")
-                    # Wake up pause event if paused so the loop can exit
-                    if hasattr(engine, '_pause_event'):
-                        engine._pause_event.set()
-                    _simulation_task.cancel()
-                    try:
-                        await _simulation_task
-                    except asyncio.CancelledError:
-                        pass
-                    _simulation_task = None
+                await _cancel_simulation(engine)
                 await websocket.send_json({"type": "status", "status": "idle", "message": "Simulation stopped"})
 
             elif action == "reset":
                 _user_stopped = False
-                if _simulation_task and not _simulation_task.done():
-                    engine.state = engine.state.__class__("completed")
-                    # Wake up pause event if paused
-                    if hasattr(engine, '_pause_event'):
-                        engine._pause_event.set()
-                    await asyncio.sleep(0.2)
+                # Properly cancel old task before resetting
+                await _cancel_simulation(engine)
 
                 soc = data.get("soc", 0.5)
                 temp = data.get("temperature_c", 25.0)
                 reset_deg = data.get("reset_degradation", False)
                 engine.reset(soc, temp, reset_deg)
+                _reset_energy_tracking(engine)
+                engine.cell.config.degradation_time_factor = 100.0
+
+                # Also reset the pack and BMS if they exist
+                try:
+                    from api.routes import get_pack, get_bms
+                    pack = get_pack()
+                    if pack is not None:
+                        pack.reset(soc, temp, reset_deg)
+                    bms = get_bms()
+                    if bms is not None:
+                        bms.reset()
+                except Exception as e:
+                    print(f"[WS] Pack/BMS reset error: {e}")
+
                 await websocket.send_json({
                     "type": "status",
                     "status": "idle",
@@ -208,7 +246,7 @@ async def simulation_websocket(websocket: WebSocket):
                 })
 
                 # Auto-restart after reset
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.05)
                 if not engine._profile:
                     engine.set_profile("constant_discharge", c_rate=0.5)
                 engine.set_callback(broadcast)
@@ -278,7 +316,7 @@ async def simulation_websocket(websocket: WebSocket):
                     capacity_variation_pct=data.get("variation_pct", 2.0),
                     enable_thermal=data.get("enable_thermal_coupling", True),
                     enable_degradation=True,
-                    degradation_time_factor=data.get("degradation_time_factor", 500.0),
+                    degradation_time_factor=data.get("degradation_time_factor", 100.0),
                 )
                 pack = BatteryPack(pack_cfg)
                 set_pack(pack)
@@ -303,15 +341,22 @@ async def simulation_websocket(websocket: WebSocket):
 
 async def _run_simulation(engine, websocket: WebSocket):
     """Background task to run the simulation with auto-cycling."""
+    global _user_stopped
+
     cycle_profiles = [
         ("constant_discharge", {"c_rate": 0.5}),
         ("constant_charge", {"c_rate": 0.5}),
     ]
     cycle_idx = 0
 
-    while True:
+    while not _user_stopped:
         try:
             await engine.run_async()
+
+            # Check if user requested stop while run_async was finishing
+            if _user_stopped:
+                break
+
             # When one profile completes, switch to the next and continue
             try:
                 await broadcast({
@@ -330,6 +375,10 @@ async def _run_simulation(engine, websocket: WebSocket):
             engine._sim_time = 0.0
 
             await asyncio.sleep(0.5)
+
+            # Double-check user hasn't stopped during the pause
+            if _user_stopped:
+                break
 
             # Notify clients that the simulation is running again
             try:
@@ -353,3 +402,7 @@ async def _run_simulation(engine, websocket: WebSocket):
             except Exception:
                 pass
             break
+
+    # Ensure engine is in a clean state when loop exits
+    if engine.state.value not in ("idle", "completed", "error"):
+        engine.state = engine.state.__class__("completed")

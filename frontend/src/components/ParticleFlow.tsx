@@ -23,6 +23,8 @@ export default function ParticleFlow() {
   const batteryState = useBatteryStore((s) => s.batteryState);
 
   const current = batteryState?.current ?? 0;
+  const resistanceFactor = batteryState?.deg_resistance_factor ?? 1.0;
+  const diffusionLimit = batteryState?.echem_diffusion_limitation ?? 0;
   const cellW = 0.091 * SCALE;
   const cellH = 0.148 * SCALE;
   const cellD = 0.027 * SCALE;
@@ -78,7 +80,11 @@ export default function ParticleFlow() {
     const posArray = posAttr.array as Float32Array;
     const colArray = colAttr.array as Float32Array;
 
-    const speed = Math.max(Math.abs(current) / 50, 0.15); // Always show some movement
+    // Speed decreases as internal resistance grows (ions face more impedance)
+    // Diffusion limitation further slows transport
+    const resistSlowdown = 1.0 / Math.max(resistanceFactor, 1.0);
+    const diffusionSlowdown = Math.max(1.0 - diffusionLimit * 0.5, 0.3);
+    const speed = Math.max(Math.abs(current) / 50, 0.15) * resistSlowdown * diffusionSlowdown;
     const direction = current > 0 ? 1 : current < 0 ? -1 : 0;
     const t = Date.now() * 0.001;
 
@@ -111,10 +117,12 @@ export default function ParticleFlow() {
       if (posArray[i3 + 2] < -halfD) posArray[i3 + 2] = halfD;
 
       // Color based on position (anode side = green, cathode side = purple)
+      // Dimmed by resistance growth — aged cells have less vivid ion flow
       const frac = (posArray[i3 + 2] + halfD) / (2 * halfD); // 0→1 from anode to cathode
-      colArray[i3] = 0.1 + frac * 0.5;       // R
-      colArray[i3 + 1] = 0.9 - frac * 0.5;   // G
-      colArray[i3 + 2] = 0.4 + frac * 0.6;   // B
+      const ageDim = resistSlowdown; // 1.0 when fresh, decreasing with age
+      colArray[i3] = (0.1 + frac * 0.5) * ageDim;       // R
+      colArray[i3 + 1] = (0.9 - frac * 0.5) * ageDim;   // G
+      colArray[i3 + 2] = (0.4 + frac * 0.6) * ageDim;   // B
     }
 
     posAttr.needsUpdate = true;
