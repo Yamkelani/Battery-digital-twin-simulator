@@ -29,7 +29,11 @@ export default function Controls() {
     configureCell,
   } = useSimulation();
 
-  const { speed, setSpeed, profiles, activeProfile, setActiveProfile } = useBatteryStore();
+  const speed = useBatteryStore((s) => s.speed);
+  const setSpeed = useBatteryStore((s) => s.setSpeed);
+  const profiles = useBatteryStore((s) => s.profiles);
+  const activeProfile = useBatteryStore((s) => s.activeProfile);
+  const setActiveProfile = useBatteryStore((s) => s.setActiveProfile);
 
   // Local state for controls
   const [initialSOC, setInitialSOC] = useState(0.8);
@@ -110,6 +114,7 @@ export default function Controls() {
   const isRunning = status === 'running';
   const isPaused = status === 'paused';
   const isIdle = status === 'idle' || status === 'completed';
+  const isActive = !isIdle && status !== 'connecting' && status !== 'error';
 
   return (
     <div className="p-3 space-y-3 overflow-y-auto max-h-full text-panel-text text-sm">
@@ -159,7 +164,7 @@ export default function Controls() {
             ▶ Resume
           </button>
         )}
-        {(isRunning || isPaused) && (
+        {isActive && (
           <button
             onClick={stop}
             className="py-2 px-3 bg-red-600 hover:bg-red-500 rounded-lg font-semibold text-white text-xs transition-colors"

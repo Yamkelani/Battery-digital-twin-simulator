@@ -6,7 +6,7 @@
  */
 
 import { create } from 'zustand';
-import type { BatteryState, ChartDataPoint, SimStatus, LoadProfile } from '../types/battery';
+import type { BatteryState, ChartDataPoint, SimStatus, LoadProfile, BMSStatus } from '../types/battery';
 
 const MAX_HISTORY = 2000;
 
@@ -33,12 +33,33 @@ interface BatteryStore {
   // UI state
   showDashboard: boolean;
   toggleDashboard: () => void;
-  selectedView: '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv';
-  setSelectedView: (v: '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv') => void;
+  selectedView: '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv' | 'bms' | 'cccv' | 'rul';
+  setSelectedView: (v: '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv' | 'bms' | 'cccv' | 'rul') => void;
 
   // Simulation speed
   speed: number;
   setSpeed: (s: number) => void;
+
+  // Pack state
+  packConfigured: boolean;
+  packCells: number;
+  packSeries: number;
+  packParallel: number;
+  setPackConfig: (n_series: number, n_parallel: number, n_cells: number) => void;
+  clearPack: () => void;
+
+  // Focused cell (click-to-zoom in pack view)
+  focusedCellId: string | null;
+  setFocusedCellId: (id: string | null) => void;
+  clearFocusedCell: () => void;
+
+  // BMS state
+  bmsStatus: BMSStatus | null;
+  setBmsStatus: (s: BMSStatus) => void;
+
+  // Cutaway / X-ray mode
+  cutawayMode: boolean;
+  toggleCutaway: () => void;
 }
 
 export const useBatteryStore = create<BatteryStore>((set, get) => ({
@@ -62,6 +83,10 @@ export const useBatteryStore = create<BatteryStore>((set, get) => ({
       soh: state.deg_soh_pct ?? 100,
       power: state.power_w ?? 0,
       heatGen: state.heat_total_w ?? 0,
+      chargingPhase: state.charging_phase ?? 'idle',
+      coulombicEff: state.coulombic_efficiency ?? 0,
+      energyEff: state.energy_efficiency ?? 0,
+      rulCycles: state.rul_cycles ?? 0,
     };
     set((prev) => ({
       chartHistory:
@@ -87,4 +112,27 @@ export const useBatteryStore = create<BatteryStore>((set, get) => ({
   // Speed
   speed: 10,
   setSpeed: (speed) => set({ speed }),
+
+  // Pack
+  packConfigured: false,
+  packCells: 0,
+  packSeries: 1,
+  packParallel: 1,
+  setPackConfig: (packSeries, packParallel, packCells) =>
+    set({ packConfigured: true, packSeries, packParallel, packCells }),
+  clearPack: () =>
+    set({ packConfigured: false, packCells: 0, packSeries: 1, packParallel: 1 }),
+
+  // Focused cell
+  focusedCellId: null,
+  setFocusedCellId: (focusedCellId) => set({ focusedCellId }),
+  clearFocusedCell: () => set({ focusedCellId: null }),
+
+  // BMS
+  bmsStatus: null,
+  setBmsStatus: (bmsStatus) => set({ bmsStatus }),
+
+  // Cutaway
+  cutawayMode: false,
+  toggleCutaway: () => set((s) => ({ cutawayMode: !s.cutawayMode })),
 }));

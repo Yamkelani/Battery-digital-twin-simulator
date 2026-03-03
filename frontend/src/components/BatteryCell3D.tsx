@@ -16,14 +16,30 @@ import * as THREE from 'three';
 import { useBatteryStore } from '../hooks/useBatteryState';
 import { socToColor, tempToColor, sohToColor } from '../utils/colors';
 
+/** Clipping plane used by cutaway mode to slice the front half of the shell */
+const CUTAWAY_PLANE = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
+
 /** Scale factor: real meters → scene units (1m = 20 units for visibility) */
 const SCALE = 20;
 
-interface Props {
-  position?: [number, number, number];
+/** Per-cell state that can be passed in from a pack view */
+export interface CellStateOverride {
+  soc: number;
+  tempC: number;
+  soh: number;
+  seiLoss: number;
+  current: number;
 }
 
-export default function BatteryCell3D({ position = [0, 0, 0] }: Props) {
+interface Props {
+  position?: [number, number, number];
+  /** Override battery state with per-cell data (used in pack grid) */
+  cellState?: CellStateOverride;
+  /** When true, disable floating / rocking animation (pack grid mode) */
+  staticPose?: boolean;
+}
+
+export default function BatteryCell3D({ position = [0, 0, 0], cellState, staticPose = false }: Props) {
   const groupRef = useRef<THREE.Group>(null);
   const shellRef = useRef<THREE.Mesh>(null);
   const anodeRef = useRef<THREE.Mesh>(null);
@@ -39,6 +55,7 @@ export default function BatteryCell3D({ position = [0, 0, 0] }: Props) {
   const heatmapRef = useRef<THREE.Mesh>(null);
 
   const batteryState = useBatteryStore((s) => s.batteryState);
+  const cutawayMode = useBatteryStore((s) => s.cutawayMode);
 
   // Thermal heatmap canvas texture
   const heatmapTexture = useMemo(() => {
@@ -55,12 +72,12 @@ export default function BatteryCell3D({ position = [0, 0, 0] }: Props) {
   const cellH = 0.148 * SCALE; // height
   const cellD = 0.027 * SCALE; // depth
 
-  // Derived state with safe defaults
-  const soc = batteryState?.soc ?? 0.5;
-  const tempC = batteryState?.thermal_T_core_c ?? 25;
-  const soh = batteryState?.deg_soh_pct ?? 100;
-  const seiLoss = batteryState?.deg_sei_loss_pct ?? 0;
-  const current = batteryState?.current ?? 0;
+  // Derived state — cellState override takes priority over global store
+  const soc = cellState?.soc ?? batteryState?.soc ?? 0.5;
+  const tempC = cellState?.tempC ?? batteryState?.thermal_T_core_c ?? 25;
+  const soh = cellState?.soh ?? batteryState?.deg_soh_pct ?? 100;
+  const seiLoss = cellState?.seiLoss ?? batteryState?.deg_sei_loss_pct ?? 0;
+  const current = cellState?.current ?? batteryState?.current ?? 0;
   const isCharging = current < 0;
   const isDischarging = current > 0;
 
@@ -77,45 +94,61 @@ export default function BatteryCell3D({ position = [0, 0, 0] }: Props) {
       metalness: 0.4,
       roughness: 0.3,
       transparent: true,
-      opacity: 0.85,
+      opacity: cutawayMode ? 0.08 : 0.85,
       side: THREE.DoubleSide,
+      clippingPlanes: cutawayMode ? [CUTAWAY_PLANE] : [],
+      clipShadows: true,
     });
-  }, [socColor, tempColor]);
+  }, [socColor, tempColor, cutawayMode]);
 
   // Internal layer materials
   const anodeMaterial = useMemo(
     () =>
       new THREE.MeshStandardMaterial({
         color: '#1a1a2e',
-        metalness: 0.6,
-        roughness: 0.4,
-        emissive: isDischarging ? '#440000' : isCharging ? '#000044' : '#000000',
-        emissiveIntensity: Math.min(Math.abs(current) / 50, 1) * 0.5,
+        metalness: cutawayMode ? 0.3 : 0.6,
+        roughness: cutawayMode ? 0.5 : 0.4,
+        emissive: cutawayMode
+          ? '#221133'
+          : isDischarging ? '#440000' : isCharging ? '#000044' : '#000000',
+        emissiveIntensity: cutawayMode
+          ? 0.6
+          : Math.min(Math.abs(current) / 50, 1) * 0.5,
+        transparent: cutawayMode,
+        opacity: cutawayMode ? 0.92 : 1,
       }),
-    [current, isCharging, isDischarging],
+    [current, isCharging, isDischarging, cutawayMode],
   );
 
   const cathodeMaterial = useMemo(
     () =>
       new THREE.MeshStandardMaterial({
         color: '#2d1b69',
-        metalness: 0.6,
-        roughness: 0.4,
-        emissive: isCharging ? '#440000' : isDischarging ? '#000044' : '#000000',
-        emissiveIntensity: Math.min(Math.abs(current) / 50, 1) * 0.5,
+        metalness: cutawayMode ? 0.3 : 0.6,
+        roughness: cutawayMode ? 0.5 : 0.4,
+        emissive: cutawayMode
+          ? '#331144'
+          : isCharging ? '#440000' : isDischarging ? '#000044' : '#000000',
+        emissiveIntensity: cutawayMode
+          ? 0.6
+          : Math.min(Math.abs(current) / 50, 1) * 0.5,
+        transparent: cutawayMode,
+        opacity: cutawayMode ? 0.92 : 1,
       }),
-    [current, isCharging, isDischarging],
+    [current, isCharging, isDischarging, cutawayMode],
   );
 
   const separatorMaterial = useMemo(
     () =>
       new THREE.MeshStandardMaterial({
-        color: '#e0e0e0',
+        color: cutawayMode ? '#ffffff' : '#e0e0e0',
         transparent: true,
-        opacity: 0.4,
+        opacity: cutawayMode ? 0.7 : 0.4,
         roughness: 0.8,
+        emissive: cutawayMode ? '#aaaaaa' : '#000000',
+        emissiveIntensity: cutawayMode ? 0.3 : 0,
       }),
-    [],
+    [cutawayMode],
   );
 
   // SOC fill level (animated internal indicator)
@@ -127,11 +160,13 @@ export default function BatteryCell3D({ position = [0, 0, 0] }: Props) {
 
     const t = Date.now() * 0.001;
 
-    // Gentle floating animation
-    groupRef.current.position.y = position[1] + Math.sin(t * 1.2) * 0.08;
+    if (!staticPose) {
+      // Gentle floating animation
+      groupRef.current.position.y = position[1] + Math.sin(t * 1.2) * 0.08;
 
-    // Gentle rocking (not continuous rotation) so layers stay oriented
-    groupRef.current.rotation.y = Math.sin(t * 0.4) * 0.15;
+      // Gentle rocking (not continuous rotation) so layers stay oriented
+      groupRef.current.rotation.y = Math.sin(t * 0.4) * 0.15;
+    }
 
     // Breathing scale based on current activity
     const activity = Math.min(Math.abs(current) / 20, 1);
@@ -172,11 +207,14 @@ export default function BatteryCell3D({ position = [0, 0, 0] }: Props) {
 
     // SEI layer accumulation — grows thicker as sei_loss increases
     if (seiRef.current && seiMatRef.current) {
-      // thickness: 0 at 0% loss, up to 8% larger at ~5% loss
-      const growFactor = 1 + seiLoss * 0.016;
+      // Amplify sei_loss for visibility: boost small values so even 0.01% shows
+      const amplified = seiLoss > 0 ? Math.max(seiLoss, 0.3) + seiLoss * 8 : 0;
+      const growFactor = 1 + amplified * 0.016;
       seiRef.current.scale.set(growFactor, growFactor, growFactor);
-      // opacity: fades in as loss grows (0 → 0.45)
-      seiMatRef.current.opacity = Math.min(seiLoss * 0.09, 0.45);
+      // opacity: always at least ~0.06 when any loss is present
+      seiMatRef.current.opacity = amplified > 0
+        ? Math.min(0.06 + amplified * 0.08, 0.5)
+        : 0;
     }
 
     // Thermal heatmap texture — paint gradient from core (hot) to surface (cool)

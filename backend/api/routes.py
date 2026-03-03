@@ -345,6 +345,7 @@ async def get_eis_spectrum(temp_c: float = 25.0) -> Dict[str, Any]:
 # ─── Pack Endpoints ──────────────────────────────────────────────────────────
 
 _pack = None
+_bms = None
 
 
 def get_pack():
@@ -357,36 +358,170 @@ def set_pack(pack):
     _pack = pack
 
 
+def get_bms():
+    global _bms
+    return _bms
+
+
+def set_bms(bms):
+    global _bms
+    _bms = bms
+
+
 @router.get("/pack/status")
 async def get_pack_status() -> Dict[str, Any]:
-    """Get current pack-level status."""
+    """Get current pack-level status with per-cell data and thermal links."""
     pack = get_pack()
     if pack is None:
         return {"status": "no_pack", "message": "No pack configured"}
     summary = pack.get_cell_summary()
-    return _convert_numpy({"status": "ok", "cells": summary, "n_cells": pack.n_cells})
+    thermal_links = pack.get_thermal_links()
+    return _convert_numpy({
+        "status": "ok",
+        "cells": summary,
+        "n_cells": pack.n_cells,
+        "thermal_links": thermal_links,
+        "n_series": pack.config.n_series,
+        "n_parallel": pack.config.n_parallel,
+    })
+
+
+class PackConfigRequest(BaseModel):
+    """Pack configuration request."""
+    n_series: int = Field(4, ge=1, le=8)
+    n_parallel: int = Field(2, ge=1, le=8)
+    capacity_ah: float = Field(50.0, ge=1.0, le=500.0)
+    variation_pct: float = Field(2.0, ge=0.0, le=10.0)
+    enable_balancing: bool = True
+    enable_thermal_coupling: bool = True
 
 
 @router.post("/pack/configure")
-async def configure_pack(
-    n_series: int = 4,
-    n_parallel: int = 2,
-    capacity_ah: float = 50.0,
-    variation_pct: float = 2.0,
-) -> Dict[str, Any]:
+async def configure_pack(req: PackConfigRequest) -> Dict[str, Any]:
     """Create / reconfigure the battery pack."""
     from models.battery_pack import BatteryPack, PackConfig
 
     cfg = PackConfig(
-        n_series=n_series,
-        n_parallel=n_parallel,
-        base_capacity_ah=capacity_ah,
-        capacity_variation_pct=variation_pct,
+        n_series=req.n_series,
+        n_parallel=req.n_parallel,
+        base_capacity_ah=req.capacity_ah,
+        capacity_variation_pct=req.variation_pct,
+        enable_thermal=req.enable_thermal_coupling,
+        enable_degradation=True,
+        degradation_time_factor=500.0,
     )
     pack = BatteryPack(cfg)
     set_pack(pack)
+
+    # Auto-create BMS for this pack
+    from models.bms import BMSModel, BMSConfig
+    bms_cfg = BMSConfig(balancing_enabled=req.enable_balancing)
+    bms = BMSModel(pack, bms_cfg)
+    set_bms(bms)
+
+    # Also broadcast to all WS clients so they know the pack changed
+    from api.websocket import broadcast, _convert_numpy
+    pack_msg = {
+        "type": "pack_configured",
+        "n_series": cfg.n_series,
+        "n_parallel": cfg.n_parallel,
+        "n_cells": pack.n_cells,
+        "cells": _convert_numpy(pack.get_cell_summary()),
+    }
+    await broadcast(pack_msg)
+
     return {
         "status": "ok",
-        "message": f"Pack created: {n_series}S{n_parallel}P ({pack.n_cells} cells)",
+        "message": f"Pack created: {req.n_series}S{req.n_parallel}P ({pack.n_cells} cells)",
         "n_cells": pack.n_cells,
+        "n_series": cfg.n_series,
+        "n_parallel": cfg.n_parallel,
     }
+
+
+@router.get("/bms/status")
+async def get_bms_status() -> Dict[str, Any]:
+    """Get current BMS status — faults, contactor, balancing."""
+    bms = get_bms()
+    if bms is None:
+        return {"status": "no_bms", "message": "No BMS active (configure a pack first)"}
+    return _convert_numpy({
+        "status": "ok",
+        **bms.get_status(),
+    })
+
+
+@router.get("/rul")
+async def get_rul_prediction() -> Dict[str, Any]:
+    """Get detailed Remaining Useful Life prediction."""
+    engine = get_engine()
+    deg = engine.cell.degradation
+    
+    # Current degradation state
+    soh = deg.state_of_health
+    capacity_retention = deg.capacity_retention
+    eq_cycles = deg.total_cycles
+    remaining_cycles = deg.remaining_useful_life_cycles
+    eol_threshold = deg.params.eol_capacity_fraction * 100
+    
+    # Degradation rate per cycle (linear approximation)
+    if eq_cycles > 0.5:
+        deg_rate_per_cycle = (1.0 - capacity_retention) / eq_cycles
+    else:
+        deg_rate_per_cycle = 0.0
+    
+    # Breakdown contributions
+    total_loss = 1.0 - capacity_retention
+    sei_fraction = deg.sei_capacity_loss / max(total_loss, 1e-9) * 100 if total_loss > 1e-6 else 0
+    cycle_fraction = deg.cycle_capacity_loss / max(total_loss, 1e-9) * 100 if total_loss > 1e-6 else 0
+    plating_fraction = deg.plating_capacity_loss / max(total_loss, 1e-9) * 100 if total_loss > 1e-6 else 0
+    
+    # Confidence level (higher cycles = more data = higher confidence)
+    confidence = min(eq_cycles / 50.0, 1.0) * 100  # 100% confidence after 50 cycles
+    
+    # Estimated remaining time at current usage rate
+    if eq_cycles > 0.5 and deg.total_time_s > 0:
+        time_per_cycle = deg.total_time_s / eq_cycles
+        remaining_time_hours = remaining_cycles * time_per_cycle / 3600.0
+    else:
+        remaining_time_hours = 0.0
+    
+    # Knee point detection (where degradation accelerates)
+    knee_point_soh = 85.0  # Typical knee point
+    cycles_to_knee = 0.0
+    if soh > knee_point_soh and deg_rate_per_cycle > 0:
+        soh_to_knee = soh - knee_point_soh
+        cycles_to_knee = soh_to_knee / (deg_rate_per_cycle * 100)
+    
+    # Energy efficiency
+    efficiency = {
+        "coulombic": engine._coulombic_eff,
+        "energy": engine._energy_eff,
+        "charge_ah": engine._charge_ah_in,
+        "discharge_ah": engine._discharge_ah_out,
+        "charge_wh": engine._charge_energy_in,
+        "discharge_wh": engine._discharge_energy_out,
+    }
+    
+    return _convert_numpy({
+        "status": "ok",
+        "soh_pct": soh,
+        "capacity_retention": capacity_retention,
+        "equivalent_cycles": eq_cycles,
+        "remaining_cycles": remaining_cycles,
+        "eol_threshold_pct": eol_threshold,
+        "degradation_rate_per_cycle": deg_rate_per_cycle,
+        "total_capacity_loss_pct": total_loss * 100,
+        "sei_contribution_pct": sei_fraction,
+        "cycle_contribution_pct": cycle_fraction,
+        "plating_contribution_pct": plating_fraction,
+        "remaining_time_hours": remaining_time_hours,
+        "confidence_pct": confidence,
+        "resistance_factor": deg.resistance_factor,
+        "total_ah_throughput": deg.total_ah_throughput,
+        "total_energy_wh": deg.total_energy_wh,
+        "knee_point_soh": knee_point_soh,
+        "cycles_to_knee_point": cycles_to_knee,
+        "is_eol": deg.is_end_of_life,
+        "efficiency": efficiency,
+    })

@@ -41,7 +41,7 @@ class PackConfig:
     enable_thermal: bool = True
     enable_degradation: bool = True
     enable_electrochemical: bool = True
-    degradation_time_factor: float = 1.0
+    degradation_time_factor: float = 500.0  # Accelerated aging for visible effects
 
 
 class BatteryPack:
@@ -136,18 +136,35 @@ class BatteryPack:
     # ─── Thermal coupling ────────────────────────────────────────────────
 
     def _apply_thermal_coupling(self, dt: float):
-        """Nearest-neighbour heat exchange between adjacent cells in each string."""
+        """Nearest-neighbour heat exchange between adjacent cells."""
         G = self.config.inter_cell_thermal_conductance
+
+        # Within each string (series-adjacent coupling)
         for string in self._cell_grid:
             for i in range(len(string) - 1):
                 T_a = string[i].thermal.T_core
                 T_b = string[i + 1].thermal.T_core
                 Q = G * (T_a - T_b)  # W
-                # Simple explicit Euler coupling (small dt ⇒ stable)
                 dT = Q * dt / (string[i].config.thermal_params.mass_kg *
                                string[i].config.thermal_params.specific_heat_j_per_kg_k)
                 string[i].thermal._state[0] -= dT
                 string[i + 1].thermal._state[0] += dT
+
+        # Across parallel strings (same series index, weaker coupling)
+        n_strings = len(self._cell_grid)
+        if n_strings > 1:
+            for si in range(len(self._cell_grid[0])):
+                for pi in range(n_strings - 1):
+                    if si < len(self._cell_grid[pi]) and si < len(self._cell_grid[pi + 1]):
+                        ca = self._cell_grid[pi][si]
+                        cb = self._cell_grid[pi + 1][si]
+                        T_a = ca.thermal.T_core
+                        T_b = cb.thermal.T_core
+                        Q = G * 0.5 * (T_a - T_b)
+                        dT = Q * dt / (ca.config.thermal_params.mass_kg *
+                                       ca.config.thermal_params.specific_heat_j_per_kg_k)
+                        ca.thermal._state[0] -= dT
+                        cb.thermal._state[0] += dT
 
     # ─── Aggregation helpers ─────────────────────────────────────────────
 
@@ -211,6 +228,13 @@ class BatteryPack:
         """Return per-cell snapshot (for the pack visualisation)."""
         summaries = []
         for cell in self.cells:
+            soh = (cell.degradation.capacity_retention * 100.0
+                   if cell.config.enable_degradation else 100.0)
+            sei_loss = (cell.degradation.sei_capacity_loss * 100.0
+                        if cell.config.enable_degradation else 0.0)
+            # Approximate current from last step result
+            current = getattr(cell, '_last_current', 0.0)
+            heat_w = getattr(cell, '_last_heat_w', 0.0)
             summaries.append({
                 "cell_id": cell.config.cell_id,
                 "soc": cell.ecm.soc,
@@ -218,11 +242,51 @@ class BatteryPack:
                     cell.ecm.state, 0, cell.thermal.T_core
                 ),
                 "temp_c": cell.thermal.T_core - 273.15,
-                "soh_pct": (cell.degradation.capacity_retention * 100.0
-                            if cell.config.enable_degradation else 100.0),
+                "soh_pct": soh,
+                "sei_loss_pct": sei_loss,
+                "current": current,
+                "heat_w": heat_w,
                 "capacity_ah": cell.config.nominal_capacity_ah,
             })
         return summaries
+
+    def get_thermal_links(self) -> List[Dict[str, Any]]:
+        """Return thermal coupling data between adjacent cells for visualisation."""
+        G = self.config.inter_cell_thermal_conductance
+        links = []
+
+        # Within each parallel string: series-adjacent cells
+        for string in self._cell_grid:
+            for i in range(len(string) - 1):
+                T_a = string[i].thermal.T_core - 273.15
+                T_b = string[i + 1].thermal.T_core - 273.15
+                Q = G * (T_a - T_b)
+                links.append({
+                    "from": string[i].config.cell_id,
+                    "to": string[i + 1].config.cell_id,
+                    "heat_flow_w": float(Q),
+                    "temp_diff_c": float(T_a - T_b),
+                })
+
+        # Across parallel strings: cells at the same series index
+        n_strings = len(self._cell_grid)
+        if n_strings > 1:
+            for si in range(len(self._cell_grid[0])):
+                for pi in range(n_strings - 1):
+                    if si < len(self._cell_grid[pi]) and si < len(self._cell_grid[pi + 1]):
+                        cell_a = self._cell_grid[pi][si]
+                        cell_b = self._cell_grid[pi + 1][si]
+                        T_a = cell_a.thermal.T_core - 273.15
+                        T_b = cell_b.thermal.T_core - 273.15
+                        Q = G * 0.5 * (T_a - T_b)  # weaker cross-string coupling
+                        links.append({
+                            "from": cell_a.config.cell_id,
+                            "to": cell_b.config.cell_id,
+                            "heat_flow_w": float(Q),
+                            "temp_diff_c": float(T_a - T_b),
+                        })
+
+        return links
 
     def reset(self, soc: float = 0.5, temperature_c: float = 25.0,
               reset_degradation: bool = False):

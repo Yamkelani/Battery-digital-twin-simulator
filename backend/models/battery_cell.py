@@ -87,6 +87,10 @@ class BatteryCell:
         self.sim_time_s: float = 0.0
         self.step_count: int = 0
 
+        # Per-step snapshots (read by pack summary)
+        self._last_current: float = 0.0
+        self._last_heat_w: float = 0.0
+
         # Track cycle depth for degradation
         self._soc_min_cycle: float = c.initial_soc
         self._soc_max_cycle: float = c.initial_soc
@@ -118,6 +122,10 @@ class BatteryCell:
 
         # === Step 1: Electrical Model (ECM) ===
         ecm_result = self.ecm.step(current, dt, T_k, cap_factor, res_factor)
+
+        # Snapshot for pack-level queries
+        self._last_current = current
+        self._last_heat_w = ecm_result.get("total_heat_w", 0.0)
 
         # === Step 2: Thermal Model ===
         if c.enable_thermal:

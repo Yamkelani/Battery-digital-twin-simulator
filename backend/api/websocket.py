@@ -22,6 +22,7 @@ ws_router = APIRouter()
 # Connected WebSocket clients
 _clients: Set[WebSocket] = set()
 _simulation_task: asyncio.Task = None
+_user_stopped: bool = False    # True after explicit "stop"; prevents auto-restart
 
 
 def _convert_numpy(obj):
@@ -71,7 +72,7 @@ async def broadcast(data: Dict[str, Any]):
     disconnected = set()
     for ws in list(_clients):
         try:
-            await ws.send_text(message)
+            await asyncio.wait_for(ws.send_text(message), timeout=2.0)
         except Exception:
             disconnected.add(ws)
 
@@ -99,18 +100,30 @@ async def simulation_websocket(websocket: WebSocket):
     _clients.add(websocket)
 
     # Send initial state
-    from api.routes import get_engine
+    from api.routes import get_engine, get_pack
     engine = get_engine()
-    await websocket.send_json({
+
+    # Include pack info if a pack is already configured
+    connected_msg = {
         "type": "connected",
         "status": engine.state.value,
         "profiles": engine.get_available_profiles(),
-    })
+    }
+    pack = get_pack()
+    if pack is not None:
+        connected_msg["pack"] = {
+            "n_series": pack.config.n_series,
+            "n_parallel": pack.config.n_parallel,
+            "n_cells": pack.n_cells,
+        }
+    await websocket.send_json(connected_msg)
 
-    global _simulation_task
+    global _simulation_task, _user_stopped
 
-    # Auto-start simulation on first connection
-    if not _simulation_task or _simulation_task.done():
+    # Auto-start simulation on first connection (unless user explicitly stopped)
+    if (not _simulation_task or _simulation_task.done()) and not _user_stopped:
+        engine.reset(0.8, 25.0, False)          # fresh state
+        engine.cell.config.degradation_time_factor = 500.0  # accelerated aging
         engine.set_callback(broadcast)
         if not engine._profile:
             engine.set_profile("constant_discharge", c_rate=0.5)
@@ -135,6 +148,7 @@ async def simulation_websocket(websocket: WebSocket):
             action = data.get("action", "")
 
             if action == "start":
+                _user_stopped = False
                 if _simulation_task and not _simulation_task.done():
                     await websocket.send_json({"type": "error", "message": "Simulation already running"})
                     continue
@@ -160,6 +174,7 @@ async def simulation_websocket(websocket: WebSocket):
 
             elif action == "stop":
                 # Fully stop the simulation (cancel the background task)
+                _user_stopped = True
                 if _simulation_task and not _simulation_task.done():
                     engine.state = engine.state.__class__("completed")
                     # Wake up pause event if paused so the loop can exit
@@ -174,6 +189,7 @@ async def simulation_websocket(websocket: WebSocket):
                 await websocket.send_json({"type": "status", "status": "idle", "message": "Simulation stopped"})
 
             elif action == "reset":
+                _user_stopped = False
                 if _simulation_task and not _simulation_task.done():
                     engine.state = engine.state.__class__("completed")
                     # Wake up pause event if paused
@@ -261,17 +277,23 @@ async def simulation_websocket(websocket: WebSocket):
                     base_capacity_ah=data.get("capacity_ah", 50.0),
                     capacity_variation_pct=data.get("variation_pct", 2.0),
                     enable_thermal=data.get("enable_thermal_coupling", True),
+                    enable_degradation=True,
+                    degradation_time_factor=data.get("degradation_time_factor", 500.0),
                 )
                 pack = BatteryPack(pack_cfg)
                 set_pack(pack)
 
-                await websocket.send_json({
+                pack_msg = {
                     "type": "pack_configured",
                     "n_series": pack_cfg.n_series,
                     "n_parallel": pack_cfg.n_parallel,
                     "n_cells": pack.n_cells,
                     "cells": _convert_numpy(pack.get_cell_summary()),
-                })
+                }
+                # Direct reply to requesting client (reliable)
+                await websocket.send_json(pack_msg)
+                # Also broadcast to other connected clients
+                await broadcast(pack_msg)
 
     except WebSocketDisconnect:
         pass
@@ -292,13 +314,13 @@ async def _run_simulation(engine, websocket: WebSocket):
             await engine.run_async()
             # When one profile completes, switch to the next and continue
             try:
-                await websocket.send_json({
+                await broadcast({
                     "type": "status",
                     "status": "cycling",
-                    "message": f"Cycle complete, switching profile...",
+                    "message": "Cycle complete, switching profile...",
                 })
             except Exception:
-                break
+                pass  # best-effort notification
 
             # Switch to next profile in the cycle
             cycle_idx = (cycle_idx + 1) % len(cycle_profiles)
@@ -309,12 +331,22 @@ async def _run_simulation(engine, websocket: WebSocket):
 
             await asyncio.sleep(0.5)
 
+            # Notify clients that the simulation is running again
+            try:
+                await broadcast({"type": "status", "status": "running"})
+            except Exception:
+                pass
+
+        except asyncio.CancelledError:
+            # Graceful stop — don't treat as an error
+            break
+
         except Exception as e:
             import traceback
             traceback.print_exc()
             print(f"[SIM ERROR] {e}")
             try:
-                await websocket.send_json({
+                await broadcast({
                     "type": "error",
                     "message": f"Simulation error: {str(e)}",
                 })

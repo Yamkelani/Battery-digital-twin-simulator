@@ -15,8 +15,11 @@ import Scene from './Scene';
 import Charts from './Charts';
 import Controls from './Controls';
 import StatusPanel from './StatusPanel';
+import BMSDashboard from './BMSDashboard';
 import NyquistPlot from './NyquistPlot';
 import DQDVChart from './DQDVChart';
+import CCCVChart from './CCCVChart';
+import RULPanel from './RULPanel';
 import { useBatteryStore } from '../hooks/useBatteryState';
 import { useTheme } from '../context/ThemeContext';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -128,6 +131,21 @@ export default function Dashboard() {
             active={selectedView === 'dqdv' as any}
             onClick={() => setSelectedView('dqdv' as any)}
           />
+          <ViewButton
+            label="BMS"
+            active={selectedView === 'bms' as any}
+            onClick={() => setSelectedView('bms' as any)}
+          />
+          <ViewButton
+            label="CC-CV"
+            active={selectedView === 'cccv' as any}
+            onClick={() => setSelectedView('cccv' as any)}
+          />
+          <ViewButton
+            label="RUL"
+            active={selectedView === 'rul' as any}
+            onClick={() => setSelectedView('rul' as any)}
+          />
           <div className="ml-auto text-[9px] text-panel-muted hidden sm:block">
             ⌨ Space·R·+/−·Esc
           </div>
@@ -178,6 +196,30 @@ export default function Dashboard() {
             <div className="flex-1 p-4">
               <ErrorBoundary label="dQ/dV Chart">
                 <DQDVChart />
+              </ErrorBoundary>
+            </div>
+          )}
+
+          {(selectedView as string) === 'bms' && (
+            <div className="flex-1">
+              <ErrorBoundary label="BMS Dashboard">
+                <BMSDashboard />
+              </ErrorBoundary>
+            </div>
+          )}
+
+          {(selectedView as string) === 'cccv' && (
+            <div className="flex-1 overflow-y-auto">
+              <ErrorBoundary label="CC-CV Chart">
+                <CCCVChart />
+              </ErrorBoundary>
+            </div>
+          )}
+
+          {(selectedView as string) === 'rul' && (
+            <div className="flex-1">
+              <ErrorBoundary label="RUL Analytics">
+                <RULPanel />
               </ErrorBoundary>
             </div>
           )}

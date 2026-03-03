@@ -21,15 +21,14 @@ export function useSimulation() {
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
   const frameCounter = useRef(0);
 
-  const {
-    status,
-    setStatus,
-    setBatteryState,
-    addChartPoint,
-    setProfiles,
-    clearHistory,
-    speed,
-  } = useBatteryStore();
+  // Use individual selectors so this hook ONLY re-renders when `status`
+  // changes — not on every simulation frame (batteryState, chartHistory, etc.)
+  const status = useBatteryStore((s) => s.status);
+  const setStatus = useBatteryStore((s) => s.setStatus);
+  const setBatteryState = useBatteryStore((s) => s.setBatteryState);
+  const addChartPoint = useBatteryStore((s) => s.addChartPoint);
+  const setProfiles = useBatteryStore((s) => s.setProfiles);
+  const clearHistory = useBatteryStore((s) => s.clearHistory);
 
   // ─── Connect to WebSocket ──────────────────────────────────────────────────
 
@@ -55,11 +54,30 @@ export function useSimulation() {
           if (data.profiles) {
             setProfiles(data.profiles);
           }
+          // Sync pack state with the backend
+          if (data.pack && data.pack.n_cells > 1) {
+            const { setPackConfig } = useBatteryStore.getState();
+            setPackConfig(
+              data.pack.n_series ?? 1,
+              data.pack.n_parallel ?? 1,
+              data.pack.n_cells ?? 1,
+            );
+          } else {
+            // Server has no pack — only clear if user hasn't locally
+            // configured one (avoids race where REST configured the pack
+            // but WS reconnects before the server registers it).
+            const { packConfigured, clearPack } = useBatteryStore.getState();
+            if (!packConfigured) {
+              clearPack();
+            }
+          }
           return;
         }
 
         if (data.type === 'status') {
-          setStatus(data.status as any);
+          // Map non-standard statuses to known SimStatus values
+          const st = data.status === 'cycling' ? 'running' : data.status;
+          setStatus(st as any);
           return;
         }
 
@@ -72,11 +90,25 @@ export function useSimulation() {
           return;
         }
 
-        // Simulation state update — ensure status shows running
+        if (data.type === 'pack_configured') {
+          const { setPackConfig } = useBatteryStore.getState();
+          setPackConfig(
+            data.n_series ?? 1,
+            data.n_parallel ?? 1,
+            data.n_cells ?? 1,
+          );
+          return;
+        }
+
+        // Simulation state update — data frames arrive while running
         if (data.soc !== undefined) {
-          setStatus('running');
           const state = data as BatteryState;
           setBatteryState(state);
+
+          // Extract BMS data if present (only when a pack is configured)
+          if (state.bms) {
+            useBatteryStore.getState().setBmsStatus(state.bms);
+          }
 
           // Add to chart history (every Nth frame to limit memory)
           frameCounter.current++;
@@ -173,7 +205,6 @@ export function useSimulation() {
     setProfile,
     setAmbientTemp,
     configureCell,
-    send,
     isConnected: wsRef.current?.readyState === WebSocket.OPEN,
   };
 }

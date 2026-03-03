@@ -2,14 +2,15 @@
  * Pack Builder UI
  *
  * Configure series / parallel cell count, manufacturing variation,
- * and create a battery pack via WebSocket.
+ * and create a battery pack via REST API (reliable request-response).
  */
 
 import { useState, useCallback } from 'react';
-import { useSimulation } from '../hooks/useSimulation';
+import { useBatteryStore } from '../hooks/useBatteryState';
+
+const API_BASE = `http://${window.location.hostname}:8001/api`;
 
 export default function PackBuilder() {
-  const { send } = useSimulation();
 
   const [nSeries, setNSeries] = useState(4);
   const [nParallel, setNParallel] = useState(2);
@@ -18,19 +19,52 @@ export default function PackBuilder() {
   const [enableBalancing, setEnableBalancing] = useState(true);
   const [thermalCoupling, setThermalCoupling] = useState(true);
   const [configured, setConfigured] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleConfigure = useCallback(() => {
-    send({
-      action: 'configure_pack',
-      n_series: nSeries,
-      n_parallel: nParallel,
-      capacity_ah: capacityAh,
-      variation_pct: variationPct,
-      enable_balancing: enableBalancing,
-      enable_thermal_coupling: thermalCoupling,
-    } as any);
-    setConfigured(true);
-  }, [send, nSeries, nParallel, capacityAh, variationPct, enableBalancing, thermalCoupling]);
+  const handleConfigure = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    // Optimistic update — switch to pack view immediately
+    useBatteryStore.getState().setPackConfig(nSeries, nParallel, nSeries * nParallel);
+
+    try {
+      const res = await fetch(`${API_BASE}/pack/configure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          n_series: nSeries,
+          n_parallel: nParallel,
+          capacity_ah: capacityAh,
+          variation_pct: variationPct,
+          enable_balancing: enableBalancing,
+          enable_thermal_coupling: thermalCoupling,
+        }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(errData.detail || errData.message || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      // Confirm with server's authoritative values
+      useBatteryStore.getState().setPackConfig(
+        data.n_series ?? nSeries,
+        data.n_parallel ?? nParallel,
+        data.n_cells ?? nSeries * nParallel,
+      );
+      setConfigured(true);
+    } catch (e: any) {
+      // Revert optimistic update on failure
+      useBatteryStore.getState().clearPack();
+      setError(e.message || 'Failed to configure pack');
+      setConfigured(false);
+    } finally {
+      setLoading(false);
+    }
+  }, [nSeries, nParallel, capacityAh, variationPct, enableBalancing, thermalCoupling]);
 
   return (
     <div className="space-y-2">
@@ -45,9 +79,9 @@ export default function PackBuilder() {
           <input
             type="number"
             min={1}
-            max={200}
+            max={8}
             value={nSeries}
-            onChange={(e) => setNSeries(Number(e.target.value))}
+            onChange={(e) => setNSeries(Math.min(8, Math.max(1, Number(e.target.value) || 1)))}
             className="w-full mt-0.5 p-1.5 bg-panel-surface border border-panel-border rounded text-xs text-panel-text"
           />
         </div>
@@ -56,9 +90,9 @@ export default function PackBuilder() {
           <input
             type="number"
             min={1}
-            max={100}
+            max={8}
             value={nParallel}
-            onChange={(e) => setNParallel(Number(e.target.value))}
+            onChange={(e) => setNParallel(Math.min(8, Math.max(1, Number(e.target.value) || 1)))}
             className="w-full mt-0.5 p-1.5 bg-panel-surface border border-panel-border rounded text-xs text-panel-text"
           />
         </div>
@@ -132,12 +166,23 @@ export default function PackBuilder() {
       {/* Build button */}
       <button
         onClick={handleConfigure}
-        className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-500 rounded-lg font-semibold text-white text-xs transition-colors"
+        disabled={loading}
+        className={`w-full py-2 px-3 rounded-lg font-semibold text-white text-xs transition-colors ${
+          loading
+            ? 'bg-indigo-400 cursor-wait'
+            : 'bg-indigo-600 hover:bg-indigo-500'
+        }`}
       >
-        {configured ? '✓ Reconfigure Pack' : '⚡ Build Pack'}
+        {loading ? '⏳ Configuring...' : configured ? '✓ Reconfigure Pack' : '⚡ Build Pack'}
       </button>
 
-      {configured && (
+      {error && (
+        <p className="text-[10px] text-red-400 text-center">
+          Error: {error}
+        </p>
+      )}
+
+      {configured && !error && (
         <p className="text-[10px] text-green-400 text-center">
           Pack: {nSeries}S{nParallel}P — {nSeries * nParallel} cells
         </p>

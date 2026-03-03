@@ -26,6 +26,7 @@ from simulation.profiles import (
     SolarStorageProfile,
     CycleAgingProfile,
 )
+from models.bms import BMSModel, BMSConfig
 
 
 class SimulationState(str, Enum):
@@ -86,6 +87,14 @@ class SimulationEngine:
 
         # Callbacks for WebSocket streaming
         self._on_step_callback: Optional[Callable] = None
+
+        # Energy efficiency tracking
+        self._charge_ah_in: float = 0.0
+        self._discharge_ah_out: float = 0.0
+        self._charge_energy_in: float = 0.0
+        self._discharge_energy_out: float = 0.0
+        self._coulombic_eff: float = 0.0
+        self._energy_eff: float = 0.0
 
     @property
     def sim_time(self) -> float:
@@ -219,6 +228,69 @@ class SimulationEngine:
 
                 # Step the cell model
                 step_result = self.cell.step(current, config.dt)
+
+                # ── Charging phase annotation for CC-CV charts ──
+                charging_phase = 'idle'
+                if self._profile is not None:
+                    if isinstance(self._profile, CCCVProfile):
+                        if self._profile.is_complete(self._sim_time, self.cell.ecm.soc):
+                            charging_phase = 'complete'
+                        elif self._profile._in_cv_phase:
+                            charging_phase = 'cv'
+                        else:
+                            charging_phase = 'cc'
+                    elif current < -0.1:
+                        charging_phase = 'charge'
+                    elif current > 0.1:
+                        charging_phase = 'discharge'
+                step_result['charging_phase'] = charging_phase
+
+                # ── Energy efficiency tracking ──
+                step_result['coulombic_efficiency'] = self._coulombic_eff
+                step_result['energy_efficiency'] = self._energy_eff
+                step_result['charge_ah_in'] = self._charge_ah_in
+                step_result['discharge_ah_out'] = self._discharge_ah_out
+                step_result['charge_energy_in'] = self._charge_energy_in
+                step_result['discharge_energy_out'] = self._discharge_energy_out
+
+                # Track cumulative charge/discharge for efficiency
+                if current < 0:  # charging
+                    self._charge_ah_in += abs(current) * config.dt / 3600.0
+                    self._charge_energy_in += abs(current * step_result.get('voltage', 3.7)) * config.dt / 3600.0
+                elif current > 0:  # discharging
+                    self._discharge_ah_out += abs(current) * config.dt / 3600.0
+                    self._discharge_energy_out += abs(current * step_result.get('voltage', 3.7)) * config.dt / 3600.0
+                if self._charge_ah_in > 0.01:
+                    self._coulombic_eff = min(self._discharge_ah_out / self._charge_ah_in, 1.0) * 100.0
+                if self._charge_energy_in > 0.01:
+                    self._energy_eff = min(self._discharge_energy_out / self._charge_energy_in, 1.0) * 100.0
+
+                # ── RUL prediction (updated periodically) ──
+                deg = self.cell.degradation
+                step_result['rul_cycles'] = deg.remaining_useful_life_cycles
+                step_result['rul_soh'] = deg.state_of_health
+                step_result['rul_eol_threshold'] = deg.params.eol_capacity_fraction * 100
+                step_result['rul_degradation_rate'] = (
+                    (1.0 - deg.capacity_retention) / max(deg.total_cycles, 0.01)
+                ) if deg.total_cycles > 0.5 else 0.0
+                step_result['rul_estimated_eol_hours'] = (
+                    deg.remaining_useful_life_cycles * 2 * deg.nominal_capacity_ah /
+                    max(abs(current), 0.01) / 3600.0 * 3600.0
+                ) if abs(current) > 0.01 else 0.0
+
+                # Also step the pack + BMS if one exists
+                try:
+                    from api.routes import get_pack, get_bms
+                    pack = get_pack()
+                    if pack is not None:
+                        pack.step(current, config.dt)
+                    bms = get_bms()
+                    if bms is not None:
+                        bms_status = bms.evaluate(current, self._sim_time)
+                        step_result['bms'] = bms_status
+                except Exception:
+                    pass
+
                 self._sim_time += config.dt
                 output_accumulator += config.dt
 
@@ -242,15 +314,21 @@ class SimulationEngine:
                     if self._on_step_callback:
                         await self._on_step_callback(step_result)
 
-                # Control simulation speed
+                # Control simulation speed — always yield enough for WS pings
                 if config.speed_multiplier < 100:
-                    # Sleep to maintain desired speed
                     target_delay = config.dt / config.speed_multiplier
-                    await asyncio.sleep(max(target_delay * 0.01, 0.001))
+                    await asyncio.sleep(max(target_delay * 0.01, 0.005))
                 else:
-                    # Batch mode: yield control occasionally
-                    if self.cell.step_count % 100 == 0:
+                    # Batch mode: yield control every step
+                    if self.cell.step_count % 50 == 0:
+                        await asyncio.sleep(0.005)
+                    else:
                         await asyncio.sleep(0)
+
+        except asyncio.CancelledError:
+            # Graceful stop requested — mark as completed, re-raise for caller
+            self.state = SimulationState.COMPLETED
+            raise
 
         except Exception as e:
             self.state = SimulationState.ERROR

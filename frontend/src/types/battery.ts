@@ -68,6 +68,27 @@ export interface BatteryState {
   heat_entropic_w: number;
   heat_total_w: number;
 
+  // BMS (only present when pack is configured)
+  bms?: BMSStatus;
+
+  // Charging phase (CC-CV annotation)
+  charging_phase?: string;
+
+  // Energy efficiency
+  coulombic_efficiency?: number;
+  energy_efficiency?: number;
+  charge_ah_in?: number;
+  discharge_ah_out?: number;
+  charge_energy_in?: number;
+  discharge_energy_out?: number;
+
+  // RUL predictions
+  rul_cycles?: number;
+  rul_soh?: number;
+  rul_eol_threshold?: number;
+  rul_degradation_rate?: number;
+  rul_estimated_eol_hours?: number;
+
   // Temperature distribution
   temperature_distribution?: {
     positions: number[];
@@ -157,6 +178,10 @@ export interface ChartDataPoint {
   soh: number;
   power: number;
   heatGen: number;
+  chargingPhase?: string;       // 'cc' | 'cv' | 'complete' | 'charge' | 'discharge' | 'idle'
+  coulombicEff?: number;        // %
+  energyEff?: number;           // %
+  rulCycles?: number;           // remaining cycles to EOL
 }
 
 // ─── 3D Visualization ──────────────────────────────────────────────────────
@@ -186,3 +211,52 @@ export interface VisualizationData {
 // ─── Simulation Status ─────────────────────────────────────────────────────
 
 export type SimStatus = 'idle' | 'running' | 'paused' | 'completed' | 'error' | 'connecting';
+
+// ─── BMS Types ─────────────────────────────────────────────────────────────
+
+export interface BMSStatus {
+  contactor_closed: boolean;
+  precharge_active: boolean;
+  balancing_active: boolean;
+  balancing_map: Record<string, boolean>;
+  active_faults: string[];
+  fault_count: number;
+  fault_history: BMSFaultEvent[];
+}
+
+export interface BMSFaultEvent {
+  fault: string;
+  time_s: number;
+  cleared: boolean;
+}
+
+// ─── RUL Prediction ────────────────────────────────────────────────────────
+
+export interface RULPrediction {
+  soh_pct: number;
+  capacity_retention: number;
+  equivalent_cycles: number;
+  remaining_cycles: number;
+  eol_threshold_pct: number;
+  degradation_rate_per_cycle: number;
+  total_capacity_loss_pct: number;
+  sei_contribution_pct: number;
+  cycle_contribution_pct: number;
+  plating_contribution_pct: number;
+  remaining_time_hours: number;
+  confidence_pct: number;
+  resistance_factor: number;
+  total_ah_throughput: number;
+  total_energy_wh: number;
+  knee_point_soh: number;
+  cycles_to_knee_point: number;
+  is_eol: boolean;
+  efficiency: {
+    coulombic: number;
+    energy: number;
+    charge_ah: number;
+    discharge_ah: number;
+    charge_wh: number;
+    discharge_wh: number;
+  };
+}
