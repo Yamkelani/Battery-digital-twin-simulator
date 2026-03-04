@@ -176,15 +176,12 @@ async def simulation_websocket(websocket: WebSocket):
 
     global _simulation_task, _user_stopped
 
-    # Auto-start simulation on first connection (unless user explicitly stopped)
-    if (not _simulation_task or _simulation_task.done()) and not _user_stopped:
-        engine.reset(0.8, 25.0, False)          # fresh state
-        engine.cell.config.degradation_time_factor = 100.0  # accelerated aging
-        engine.set_callback(broadcast)
-        if not engine._profile:
-            engine.set_profile("constant_discharge", c_rate=0.5)
-        _simulation_task = asyncio.create_task(_run_simulation(engine, websocket))
-        await websocket.send_json({"type": "status", "status": "running"})
+    # Do NOT auto-start — wait for the user to click Start.
+    # Just inform the client about the current engine state.
+    current_status = "idle"
+    if _simulation_task and not _simulation_task.done():
+        current_status = engine.state.value if engine.state.value in ("running", "paused") else "idle"
+    await websocket.send_json({"type": "status", "status": current_status})
 
     try:
         while True:
@@ -275,13 +272,7 @@ async def simulation_websocket(websocket: WebSocket):
                     "message": "Simulation reset",
                 })
 
-                # Auto-restart after reset
-                await asyncio.sleep(0.05)
-                if not engine._profile:
-                    engine.set_profile("constant_discharge", c_rate=0.5)
-                engine.set_callback(broadcast)
-                _simulation_task = asyncio.create_task(_run_simulation(engine, websocket))
-                await websocket.send_json({"type": "status", "status": "running"})
+                # Do NOT auto-restart — leave in idle until user clicks Start.
 
             elif action == "set_speed":
                 speed = data.get("value", 1.0)
@@ -370,69 +361,40 @@ async def simulation_websocket(websocket: WebSocket):
 
 
 async def _run_simulation(engine, websocket: WebSocket):
-    """Background task to run the simulation with auto-cycling."""
+    """Background task to run the simulation until the profile completes.
+
+    The loop runs the current profile to completion and then stops.
+    If the user selected the 'cycle_aging' profile, the engine itself
+    handles multi-cycle logic internally.  For all other profiles the
+    simulation finishes once and the user must explicitly click Start
+    again (or choose a different profile and press Start).
+    """
     global _user_stopped
 
-    cycle_profiles = [
-        ("constant_discharge", {"c_rate": 0.5}),
-        ("constant_charge", {"c_rate": 0.5}),
-    ]
-    cycle_idx = 0
-
-    while not _user_stopped:
+    try:
+        await engine.run_async()
+    except asyncio.CancelledError:
+        # Graceful stop via user pressing Stop — not an error.
+        pass
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[SIM ERROR] {e}")
         try:
-            await engine.run_async()
+            await broadcast({
+                "type": "error",
+                "message": f"Simulation error: {str(e)}",
+            })
+        except Exception:
+            pass
 
-            # Check if user requested stop while run_async was finishing
-            if _user_stopped:
-                break
-
-            # When one profile completes, switch to the next and continue
-            try:
-                await broadcast({
-                    "type": "status",
-                    "status": "cycling",
-                    "message": "Cycle complete, switching profile...",
-                })
-            except Exception:
-                pass  # best-effort notification
-
-            # Switch to next profile in the cycle
-            cycle_idx = (cycle_idx + 1) % len(cycle_profiles)
-            profile_type, params = cycle_profiles[cycle_idx]
-            engine.set_profile(profile_type, **params)
-            engine.state = engine.state.__class__("idle")
-            engine._sim_time = 0.0
-
-            await asyncio.sleep(0.5)
-
-            # Double-check user hasn't stopped during the pause
-            if _user_stopped:
-                break
-
-            # Notify clients that the simulation is running again
-            try:
-                await broadcast({"type": "status", "status": "running"})
-            except Exception:
-                pass
-
-        except asyncio.CancelledError:
-            # Graceful stop — don't treat as an error
-            break
-
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print(f"[SIM ERROR] {e}")
-            try:
-                await broadcast({
-                    "type": "error",
-                    "message": f"Simulation error: {str(e)}",
-                })
-            except Exception:
-                pass
-            break
-
-    # Ensure engine is in a clean state when loop exits
+    # Ensure engine is in a clean state when the task exits
     if engine.state.value not in ("idle", "completed", "error"):
         engine.state = engine.state.__class__("completed")
+
+    # Notify all clients that the simulation finished
+    final_status = "idle" if _user_stopped else "completed"
+    try:
+        await broadcast({"type": "status", "status": final_status})
+    except Exception:
+        pass

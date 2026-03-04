@@ -200,7 +200,7 @@ export default function CellEffectsLegend() {
   const activeCount = items.filter((i) => i.active).length;
 
   return (
-    <div className="absolute bottom-4 left-4 z-20 select-none" style={{ maxWidth: 480 }}>
+    <div className="absolute bottom-4 left-4 z-20 select-none" style={{ maxWidth: 520 }}>
       {/* Toggle button */}
       <button
         onClick={() => setExpanded(!expanded)}
@@ -235,35 +235,35 @@ export default function CellEffectsLegend() {
                   <LegendSwatch item={item} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">
-                      <span className={`font-semibold ${item.active ? 'text-white' : 'text-slate-500'}`}>
+                      <span className={`text-base font-bold tracking-wide ${item.active ? 'text-white' : 'text-slate-500'}`}>
                         {item.label}
                       </span>
                       {item.value && (
                         <span
-                          className="shrink-0 font-mono text-xs px-2 py-0.5 rounded bg-white/[0.06]"
+                          className="shrink-0 font-mono text-sm font-semibold px-2.5 py-1 rounded bg-white/[0.08]"
                           style={{ color: item.active ? item.color : '#64748b' }}
                         >
                           {item.value}
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-slate-400 leading-snug mt-0.5">{item.description}</p>
+                    <p className="text-sm text-slate-300 leading-relaxed mt-0.5">{item.description}</p>
                   </div>
                 </motion.div>
               ))}
 
               {/* Accelerated aging indicator */}
               <div className="border-t border-white/[0.06] mt-2 pt-2.5 px-3">
-                <div className="flex items-center gap-3 text-xs text-slate-400">
+                <div className="flex items-center gap-3 text-sm text-slate-300">
                   <motion.div
-                    className="w-3 h-3 rounded-full bg-violet-500"
+                    className="w-3.5 h-3.5 rounded-full bg-violet-500"
                     animate={{ scale: [1, 1.3, 1] }}
                     transition={{ duration: 0.6, repeat: Infinity }}
                   />
                   <span>Pulsing effects = actively growing / changing</span>
                 </div>
-                <div className="flex items-center gap-3 text-xs text-slate-400 mt-1.5">
-                  <div className="w-3 h-3 rounded-full bg-slate-600" />
+                <div className="flex items-center gap-3 text-sm text-slate-300 mt-1.5">
+                  <div className="w-3.5 h-3.5 rounded-full bg-slate-600" />
                   <span>Greyed items = effect not currently active</span>
                 </div>
               </div>

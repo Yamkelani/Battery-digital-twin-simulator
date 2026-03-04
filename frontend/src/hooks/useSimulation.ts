@@ -55,8 +55,13 @@ export function useSimulation() {
         const data = JSON.parse(sanitised);
 
         if (data.type === 'connected') {
-          // Server auto-starts, set status to running
-          setStatus(data.status === 'running' ? 'running' : 'idle');
+          // Sync frontend status with actual server state
+          const serverStatus = data.status;
+          if (serverStatus === 'running' || serverStatus === 'paused') {
+            setStatus(serverStatus);
+          } else {
+            setStatus('idle');
+          }
           if (data.profiles) {
             setProfiles(data.profiles);
           }
@@ -81,9 +86,7 @@ export function useSimulation() {
         }
 
         if (data.type === 'status') {
-          // Map non-standard statuses to known SimStatus values
-          const st = data.status === 'cycling' ? 'running' : data.status;
-          setStatus(st as any);
+          setStatus(data.status as any);
           return;
         }
 
