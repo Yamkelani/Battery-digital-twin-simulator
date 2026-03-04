@@ -33,8 +33,8 @@ interface BatteryStore {
   // UI state
   showDashboard: boolean;
   toggleDashboard: () => void;
-  selectedView: '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv' | 'bms' | 'cccv' | 'rul' | 'ml-data' | 'thermal' | 'aging' | 'safety' | 'balancing' | 'sweep';
-  setSelectedView: (v: '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv' | 'bms' | 'cccv' | 'rul' | 'ml-data' | 'thermal' | 'aging' | 'safety' | 'balancing' | 'sweep') => void;
+  selectedView: '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv' | 'bms' | 'cccv' | 'rul' | 'ml-data' | 'thermal' | 'aging' | 'safety' | 'balancing' | 'sweep' | 'physics' | 'wizard' | 'tuner' | 'quickstart';
+  setSelectedView: (v: '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv' | 'bms' | 'cccv' | 'rul' | 'ml-data' | 'thermal' | 'aging' | 'safety' | 'balancing' | 'sweep' | 'physics' | 'wizard' | 'tuner' | 'quickstart') => void;
 
   // Simulation speed
   speed: number;

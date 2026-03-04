@@ -33,6 +33,10 @@ import CycleAgingComparison from './CycleAgingComparison';
 import SafetyAbusePanel from './SafetyAbusePanel';
 import PackSOCHistogram from './PackSOCHistogram';
 import ParameterSweepPanel from './ParameterSweepPanel';
+import InteractivePhysicsLab from './InteractivePhysicsLab';
+import ScenarioWizard from './ScenarioWizard';
+import LiveParameterTuner from './LiveParameterTuner';
+import QuickStartPresets from './QuickStartPresets';
 
 import Sidebar from './ui/Sidebar';
 import CommandPalette from './ui/CommandPalette';
@@ -193,6 +197,15 @@ export default function Dashboard() {
                  selectedView === 'nyquist' ? 'Nyquist (EIS)' :
                  selectedView === '3d' ? '3D Visualization' :
                  selectedView === 'charts' ? 'Time Series' :
+                 selectedView === 'thermal' ? 'Thermal Management' :
+                 selectedView === 'aging' ? 'Cycle Aging Comparison' :
+                 selectedView === 'safety' ? 'Safety Abuse Testing' :
+                 selectedView === 'balancing' ? 'SOC & Cell Balancing' :
+                 selectedView === 'sweep' ? 'Parameter Sweep' :
+                 selectedView === 'physics' ? 'Interactive Physics Lab' :
+                 selectedView === 'wizard' ? 'Scenario Wizard' :
+                 selectedView === 'tuner' ? 'Live Parameter Tuner' :
+                 selectedView === 'quickstart' ? 'Quick Start' :
                  'Overview'}
               </span>
               <span className="text-[11px] text-panel-muted/50 border border-white/[0.06] rounded px-2 py-0.5">
@@ -352,6 +365,38 @@ export default function Dashboard() {
                 <motion.div key="sweep" className="absolute inset-0 overflow-hidden" {...viewTransition}>
                   <ErrorBoundary label="Parameter Sweep">
                     <ParameterSweepPanel />
+                  </ErrorBoundary>
+                </motion.div>
+              )}
+
+              {selectedView === 'physics' && (
+                <motion.div key="physics" className="absolute inset-0 overflow-hidden" {...viewTransition}>
+                  <ErrorBoundary label="Physics Lab">
+                    <InteractivePhysicsLab />
+                  </ErrorBoundary>
+                </motion.div>
+              )}
+
+              {selectedView === 'wizard' && (
+                <motion.div key="wizard" className="absolute inset-0 overflow-hidden" {...viewTransition}>
+                  <ErrorBoundary label="Scenario Wizard">
+                    <ScenarioWizard />
+                  </ErrorBoundary>
+                </motion.div>
+              )}
+
+              {selectedView === 'tuner' && (
+                <motion.div key="tuner" className="absolute inset-0 overflow-hidden" {...viewTransition}>
+                  <ErrorBoundary label="Live Tuner">
+                    <LiveParameterTuner />
+                  </ErrorBoundary>
+                </motion.div>
+              )}
+
+              {selectedView === 'quickstart' && (
+                <motion.div key="quickstart" className="absolute inset-0 overflow-hidden" {...viewTransition}>
+                  <ErrorBoundary label="Quick Start">
+                    <QuickStartPresets />
                   </ErrorBoundary>
                 </motion.div>
               )}

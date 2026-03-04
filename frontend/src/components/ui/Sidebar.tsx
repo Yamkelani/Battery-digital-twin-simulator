@@ -29,22 +29,30 @@ import {
   Shield,
   BarChart2,
   SlidersHorizontal,
+  Atom,
+  Rocket,
+  Radio,
+  Sparkles,
   type LucideIcon,
 } from 'lucide-react';
 import { useBatteryStore } from '../../hooks/useBatteryState';
 import { useTheme } from '../../context/ThemeContext';
 
-type ViewId = '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv' | 'bms' | 'cccv' | 'rul' | 'ml-data' | 'thermal' | 'aging' | 'safety' | 'balancing' | 'sweep';
+type ViewId = '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv' | 'bms' | 'cccv' | 'rul' | 'ml-data' | 'thermal' | 'aging' | 'safety' | 'balancing' | 'sweep' | 'physics' | 'wizard' | 'tuner' | 'quickstart';
 
 interface NavItem {
   id: ViewId;
   label: string;
   icon: LucideIcon;
   shortcut?: string;
-  group: 'views' | 'analysis' | 'data';
+  group: 'views' | 'analysis' | 'data' | 'interactive';
 }
 
 const navItems: NavItem[] = [
+  { id: 'quickstart', label: 'Quick Start',  icon: Sparkles,       shortcut: undefined, group: 'interactive' },
+  { id: 'wizard',  label: 'Scenario Wizard', icon: Rocket,        shortcut: undefined, group: 'interactive' },
+  { id: 'physics', label: 'Physics Lab',   icon: Atom,            shortcut: undefined, group: 'interactive' },
+  { id: 'tuner',   label: 'Live Tuner',    icon: Radio,           shortcut: undefined, group: 'interactive' },
   { id: 'split',   label: 'Overview',     icon: LayoutDashboard, shortcut: '1', group: 'views' },
   { id: '3d',      label: '3D Scene',     icon: Box,             shortcut: '2', group: 'views' },
   { id: 'charts',  label: 'Time Series',  icon: BarChart3,       shortcut: '3', group: 'views' },
@@ -80,6 +88,7 @@ export default function Sidebar({ onOpenCommandPalette, onOpenSettings }: Sideba
   );
 
   const groups = [
+    { key: 'interactive', label: 'GET STARTED' },
     { key: 'views', label: 'VIEWS' },
     { key: 'analysis', label: 'ANALYSIS' },
     { key: 'data', label: 'DATA' },
