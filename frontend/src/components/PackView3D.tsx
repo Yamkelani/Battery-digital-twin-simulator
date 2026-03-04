@@ -121,6 +121,15 @@ function PackCellSimple({ cellState }: { cellState: CellStateOverride }) {
   const soh = safe(cellState.soh, 100);
   const opacity = Math.max(0.6, soh / 100) * 0.85;
 
+  // ── Disable frustum culling on all descendants ──
+  // Without this, imperatively-animated meshes (breathing, SEI growth,
+  // fill bar) can have stale bounding spheres that cause Three.js to
+  // skip rendering them when the camera moves → cells "disappear."
+  useEffect(() => {
+    if (!groupRef.current) return;
+    groupRef.current.traverse((obj) => { obj.frustumCulled = false; });
+  });
+
   // Animate every frame — imperative updates, zero re-renders, zero allocations
   useFrame(() => {
     const t = Date.now() * 0.001;
@@ -249,9 +258,9 @@ function PackCellSimple({ cellState }: { cellState: CellStateOverride }) {
   });
 
   return (
-    <group ref={groupRef}>
+    <group ref={groupRef} frustumCulled={false}>
       {/* Shell — SOC-colored, subtly darkened by degradation */}
-      <mesh geometry={_packBoxGeo} renderOrder={0}>
+      <mesh geometry={_packBoxGeo} renderOrder={0} frustumCulled={false}>
         <meshStandardMaterial
           ref={shellRef}
           color="#22c55e"
@@ -509,7 +518,7 @@ function HeatFlowLines({
   }, [links, cellPositions]);
 
   return (
-    <group ref={groupRef}>
+    <group ref={groupRef} frustumCulled={false}>
       {linkElements.map((el) => {
         const g = (
           <group
@@ -635,7 +644,7 @@ function CurrentFlowArrows({
   if (arrows.length === 0) return null;
 
   return (
-    <group ref={groupRef}>
+    <group ref={groupRef} frustumCulled={false}>
       {arrows.map((a, i) => {
         // Orient cone along the (already direction-corrected) start→end
         const dir = a.end.clone().sub(a.start).normalize();
@@ -781,7 +790,7 @@ export default function PackView3D() {
   const halfZ = ((layout.rows - 1) * SPACING_Z) / 2;
 
   return (
-    <group ref={groupRef} position={[0, 0.5, 0]}>
+    <group ref={groupRef} position={[0, 0.5, 0]} frustumCulled={false}>
       {/* ── Individual cells ──────────────────────────────────── */}
       {renderData.cells.slice(0, MAX_PACK_CELLS).map((cell, idx) => {
         const col = idx % layout.cols;

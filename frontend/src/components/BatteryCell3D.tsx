@@ -192,6 +192,18 @@ export default function BatteryCell3D({ position = [0, 0, 0], cellState, staticP
   const effectiveCapacity = soh / 100;
   const fillHeight = useMemo(() => cellH * soc * effectiveCapacity * 0.85, [soc, effectiveCapacity, cellH]);
 
+  // ── Disable frustum culling on ALL descendants ──
+  // Three.js frustumCulled is per-object (NOT inherited).  When useFrame
+  // imperatively changes scale / position / visibility each frame the
+  // mesh bounding-sphere goes stale.  If the camera then moves so the
+  // stale sphere falls outside the frustum, Three.js skips the mesh →
+  // the cell "disappears."  Disabling culling on every child permanently
+  // prevents this class of rendering glitch.
+  useEffect(() => {
+    if (!groupRef.current) return;
+    groupRef.current.traverse((obj) => { obj.frustumCulled = false; });
+  });
+
   // Animate — breathing, floating, glow, rotation
   useFrame((_state: any, delta: number) => {
     if (!groupRef.current) return;
@@ -434,7 +446,7 @@ export default function BatteryCell3D({ position = [0, 0, 0], cellState, staticP
   const layerGap = cellD * 0.02;
 
   return (
-    <group ref={groupRef} position={position}>
+    <group ref={groupRef} position={position} frustumCulled={false}>
       {/* ── Battery Shell (Prismatic Casing) ────────────────────────── */}
       <mesh ref={shellRef} material={shellMaterial}>
         <boxGeometry args={[cellW, cellH, cellD]} />

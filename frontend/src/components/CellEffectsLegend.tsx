@@ -41,11 +41,11 @@ function LegendSwatch({ item }: { item: LegendItem }) {
   return (
     <div className="relative flex-shrink-0">
       <div
-        className={`w-4 h-4 ${shapeClass}`}
+        className={`w-6 h-6 ${shapeClass}`}
         style={{
           background: item.shape === 'ring' ? 'transparent' : bg,
           borderColor: item.shape === 'ring' ? item.color : undefined,
-          borderWidth: item.shape === 'ring' ? '2px' : undefined,
+          borderWidth: item.shape === 'ring' ? '2.5px' : undefined,
           borderStyle: item.shape === 'ring' ? 'solid' : undefined,
         }}
       />
@@ -200,19 +200,19 @@ export default function CellEffectsLegend() {
   const activeCount = items.filter((i) => i.active).length;
 
   return (
-    <div className="absolute bottom-3 left-3 z-20 select-none" style={{ maxWidth: 340 }}>
+    <div className="absolute bottom-4 left-4 z-20 select-none" style={{ maxWidth: 480 }}>
       {/* Toggle button */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="glass-card px-3 py-1.5 text-[11px] font-semibold text-white flex items-center gap-2
-                   cursor-pointer hover:bg-white/[0.08] transition-colors mb-1"
+        className="glass-card px-4 py-3 text-base font-semibold text-white flex items-center gap-3
+                   cursor-pointer hover:bg-white/[0.08] transition-colors mb-2"
       >
-        <Info className="w-3.5 h-3.5 text-blue-400" />
+        <Info className="w-6 h-6 text-blue-400" />
         <span>Visual Effects Legend</span>
-        <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400">
+        <span className="ml-1 text-sm px-2.5 py-1 rounded-full bg-blue-500/20 text-blue-400">
           {activeCount} active
         </span>
-        {expanded ? <ChevronDown className="w-3 h-3 ml-auto" /> : <ChevronUp className="w-3 h-3 ml-auto" />}
+        {expanded ? <ChevronDown className="w-5 h-5 ml-auto" /> : <ChevronUp className="w-5 h-5 ml-auto" />}
       </button>
 
       <AnimatePresence>
@@ -224,11 +224,11 @@ export default function CellEffectsLegend() {
             transition={{ duration: 0.2 }}
             className="glass-card overflow-hidden"
           >
-            <div className="p-2 space-y-0.5 max-h-[50vh] overflow-y-auto scrollbar-thin">
+            <div className="p-3 space-y-1.5 max-h-[60vh] overflow-y-auto scrollbar-thin">
               {items.map((item) => (
                 <motion.div
                   key={item.id}
-                  className={`flex items-start gap-2 px-2 py-1.5 rounded-lg transition-colors text-[10px]
+                  className={`flex items-start gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm
                     ${item.active ? 'bg-white/[0.04]' : 'opacity-40'}`}
                   layout
                 >
@@ -240,30 +240,30 @@ export default function CellEffectsLegend() {
                       </span>
                       {item.value && (
                         <span
-                          className="shrink-0 font-mono text-[9px] px-1.5 py-0.5 rounded bg-white/[0.06]"
+                          className="shrink-0 font-mono text-xs px-2 py-0.5 rounded bg-white/[0.06]"
                           style={{ color: item.active ? item.color : '#64748b' }}
                         >
                           {item.value}
                         </span>
                       )}
                     </div>
-                    <p className="text-[9px] text-slate-500 leading-tight mt-0.5">{item.description}</p>
+                    <p className="text-xs text-slate-400 leading-snug mt-0.5">{item.description}</p>
                   </div>
                 </motion.div>
               ))}
 
               {/* Accelerated aging indicator */}
-              <div className="border-t border-white/[0.06] mt-1 pt-1.5 px-2">
-                <div className="flex items-center gap-2 text-[9px] text-slate-500">
+              <div className="border-t border-white/[0.06] mt-2 pt-2.5 px-3">
+                <div className="flex items-center gap-3 text-xs text-slate-400">
                   <motion.div
-                    className="w-2 h-2 rounded-full bg-violet-500"
+                    className="w-3 h-3 rounded-full bg-violet-500"
                     animate={{ scale: [1, 1.3, 1] }}
                     transition={{ duration: 0.6, repeat: Infinity }}
                   />
                   <span>Pulsing effects = actively growing / changing</span>
                 </div>
-                <div className="flex items-center gap-2 text-[9px] text-slate-500 mt-1">
-                  <div className="w-2 h-2 rounded-full bg-slate-600" />
+                <div className="flex items-center gap-3 text-xs text-slate-400 mt-1.5">
+                  <div className="w-3 h-3 rounded-full bg-slate-600" />
                   <span>Greyed items = effect not currently active</span>
                 </div>
               </div>
