@@ -13,7 +13,7 @@
 
 import { Suspense, useRef, useMemo, useEffect, useState, useCallback } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
+import { OrbitControls, Environment } from '@react-three/drei';
 import * as THREE from 'three';
 import BatteryCell3D, { type CellStateOverride } from './BatteryCell3D';
 import ParticleFlow from './ParticleFlow';
@@ -125,24 +125,25 @@ function SceneContent() {
   return (
     <>
       {/* ── Lighting ─────────────────────────────────────────────── */}
-      <ambientLight intensity={0.5} />
-      <directionalLight position={[5, 8, 5]} intensity={0.8} />
+      <ambientLight intensity={0.4} />
+      <directionalLight position={[5, 8, 5]} intensity={0.9} castShadow />
       <directionalLight position={[-3, 4, -5]} intensity={0.3} color="#6699ff" />
       <pointLight position={[0, -2, 3]} intensity={0.3} color="#ff9933" />
+      {/* Subtle rim light */}
+      <pointLight position={[-5, 2, -5]} intensity={0.2} color="#8b5cf6" />
+
+      {/* ── Environment HDRI for reflections ─────────────────────── */}
+      <Environment preset="city" background={false} />
 
       {/* ── Battery Cell(s) ──────────────────────────────────────── */}
       {packConfigured ? (
         <>
-          {/* Keep PackView3D always mounted so it retains data;
-              toggle visibility when a cell is focused */}
           <group visible={!focusedCellId}>
             <PackView3D />
           </group>
-          {/* Zoomed-in single cell from the pack */}
           {focusedCellId && <FocusedCellView cellId={focusedCellId} />}
         </>
       ) : (
-        /* Single-cell mode (no pack configured) */
         <>
           <BatteryCell3D position={[0, 0.5, 0]} />
           <ParticleFlow />
@@ -188,7 +189,7 @@ export default function Scene() {
     return (
       <div style={{
         position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center', background: '#0a0f1e', color: '#e2e8f0',
+        alignItems: 'center', justifyContent: 'center', background: '#080d1a', color: '#e2e8f0',
         gap: 16, fontFamily: 'system-ui',
       }}>
         <p style={{ fontSize: 18, fontWeight: 600 }}>3D Scene Error</p>
@@ -212,54 +213,23 @@ export default function Scene() {
       {focusedCellId && (
         <button
           onClick={clearFocusedCell}
-          style={{
-            position: 'absolute',
-            top: 12,
-            left: 12,
-            zIndex: 20,
-            background: 'rgba(30,41,59,0.85)',
-            color: '#e2e8f0',
-            border: '1px solid #475569',
-            borderRadius: 6,
-            padding: '6px 14px',
-            cursor: 'pointer',
-            fontSize: 13,
-            fontWeight: 600,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            backdropFilter: 'blur(8px)',
-          }}
+          className="absolute top-3 left-3 z-20 glass-card px-3 py-1.5 text-xs font-semibold text-white
+                     flex items-center gap-1.5 cursor-pointer hover:bg-white/[0.08] transition-colors"
         >
           ← Back to Pack
-          <span style={{ opacity: 0.7, fontWeight: 400 }}>({focusedCellId})</span>
+          <span className="opacity-60 font-normal">({focusedCellId})</span>
         </button>
       )}
 
-      {/* Cutaway / X-ray toggle button */}
+      {/* Cutaway / X-ray toggle */}
       {(!packConfigured || focusedCellId) && (
         <button
           onClick={toggleCutaway}
-          style={{
-            position: 'absolute',
-            top: 12,
-            right: 12,
-            zIndex: 20,
-            background: cutawayMode ? 'rgba(59,130,246,0.85)' : 'rgba(30,41,59,0.85)',
-            color: '#e2e8f0',
-            border: cutawayMode ? '1px solid #60a5fa' : '1px solid #475569',
-            borderRadius: 6,
-            padding: '6px 14px',
-            cursor: 'pointer',
-            fontSize: 13,
-            fontWeight: 600,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            backdropFilter: 'blur(8px)',
-          }}
+          className={`absolute top-3 right-3 z-20 glass-card px-3 py-1.5 text-xs font-semibold text-white
+                     flex items-center gap-1.5 cursor-pointer hover:bg-white/[0.08] transition-colors
+                     ${cutawayMode ? 'ring-1 ring-blue-400/50' : ''}`}
         >
-          {cutawayMode ? '🔬' : '🔍'} {cutawayMode ? 'Solid View' : 'X-Ray Mode'}
+          {cutawayMode ? '🔬 Solid View' : '🔍 X-Ray Mode'}
         </button>
       )}
 
@@ -277,11 +247,12 @@ export default function Scene() {
           powerPreference: 'high-performance',
           failIfMajorPerformanceCaveat: false,
         }}
-        style={{ background: '#0a0f1e' }}
+        style={{ background: '#080d1a' }}
         onCreated={({ gl }: any) => {
-          gl.setClearColor('#0a0f1e');
+          gl.setClearColor('#080d1a');
           gl.localClippingEnabled = true;
-          // Listen for WebGL context loss
+          gl.toneMapping = THREE.ACESFilmicToneMapping;
+          gl.toneMappingExposure = 1.2;
           const canvas = gl.domElement;
           canvas.addEventListener('webglcontextlost', (e: Event) => {
             e.preventDefault();

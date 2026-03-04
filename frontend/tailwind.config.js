@@ -1,6 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
@@ -13,12 +14,20 @@ export default {
           cyan: '#06b6d4',
         },
         panel: {
-          bg: '#0f172a',
-          surface: '#1e293b',
-          border: '#334155',
-          text: '#e2e8f0',
-          muted: '#94a3b8',
+          bg: 'var(--bg)',
+          surface: 'var(--surface)',
+          border: 'var(--border)',
+          text: 'var(--text)',
+          muted: 'var(--muted)',
         },
+      },
+      backdropBlur: {
+        xs: '2px',
+      },
+      animation: {
+        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'shimmer': 'shimmer 1.5s ease-in-out infinite',
+        'float': 'float 3s ease-in-out infinite',
       },
     },
   },

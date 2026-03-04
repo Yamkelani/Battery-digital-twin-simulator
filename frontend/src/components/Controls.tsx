@@ -14,6 +14,8 @@ import { useBatteryStore } from '../hooks/useBatteryState';
 import { useSimulation } from '../hooks/useSimulation';
 import ExportButton from './ExportButton';
 import PackBuilder from './PackBuilder';
+import ChemistrySelector from './ChemistrySelector';
+import FaultInjectionPanel from './FaultInjectionPanel';
 
 export default function Controls() {
   const {
@@ -325,6 +327,16 @@ export default function Controls() {
           Data Export
         </h4>
         <ExportButton />
+      </div>
+
+      {/* ─── Chemistry ──────────────────────────────────────────── */}
+      <div className="border-t border-panel-border pt-2">
+        <ChemistrySelector />
+      </div>
+
+      {/* ─── Fault Injection ────────────────────────────────────── */}
+      <div className="border-t border-panel-border pt-2">
+        <FaultInjectionPanel />
       </div>
 
       {/* ─── Pack Builder ───────────────────────────────────────── */}

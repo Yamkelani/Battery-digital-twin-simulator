@@ -1,19 +1,26 @@
 /**
- * Main Dashboard Layout
+ * Main Dashboard Layout v2
  *
- * Composes the full application layout:
- *   - Left panel: Simulation controls
- *   - Center: 3D scene (top) + Charts (bottom)
- *   - Right panel: Real-time status metrics
- *   - Error boundaries to prevent blank screen on crash
- *   - Theme toggle (dark/light)
- *   - Keyboard shortcuts
+ * Professional layout with:
+ *   - Icon sidebar navigation (left)
+ *   - Resizable center content area
+ *   - Slide-out control drawer (right)
+ *   - Floating metrics overlay on 3D view
+ *   - Command palette (Ctrl+K)
+ *   - Toast notifications for sim events
+ *   - Bottom status bar with pack mini-map
+ *   - Animated view transitions
+ *   - Error boundaries everywhere
  */
 
-import { Component, type ReactNode } from 'react';
+import { Component, type ReactNode, useState, useCallback, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
+import { Toaster } from 'sonner';
+import { SlidersHorizontal } from 'lucide-react';
+
 import Scene from './Scene';
 import Charts from './Charts';
-import Controls from './Controls';
 import StatusPanel from './StatusPanel';
 import BMSDashboard from './BMSDashboard';
 import NyquistPlot from './NyquistPlot';
@@ -21,11 +28,19 @@ import DQDVChart from './DQDVChart';
 import CCCVChart from './CCCVChart';
 import RULPanel from './RULPanel';
 import MLExportPanel from './MLExportPanel';
-import { useBatteryStore } from '../hooks/useBatteryState';
-import { useTheme } from '../context/ThemeContext';
-import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 
-/** Error Boundary — catches React crashes and shows fallback instead of blank screen */
+import Sidebar from './ui/Sidebar';
+import CommandPalette from './ui/CommandPalette';
+import StatusBar from './ui/StatusBar';
+import ControlDrawer from './ui/ControlDrawer';
+import MetricsTicker from './ui/MetricsTicker';
+
+import { useBatteryStore } from '../hooks/useBatteryState';
+import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
+import { useSimulationToasts } from '../hooks/useSimulationToasts';
+
+/* ─── Error Boundary ─────────────────────────────────────────────────── */
+
 class ErrorBoundary extends Component<
   { children: ReactNode; label: string },
   { hasError: boolean; error?: Error }
@@ -46,16 +61,19 @@ class ErrorBoundary extends Component<
   render() {
     if (this.state.hasError) {
       return (
-        <div className="flex items-center justify-center h-full bg-panel-surface text-panel-muted p-4">
-          <div className="text-center">
+        <div className="flex items-center justify-center h-full text-panel-muted p-6">
+          <div className="text-center max-w-xs">
+            <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-3">
+              <span className="text-red-400 text-lg">!</span>
+            </div>
             <p className="text-sm font-semibold text-red-400 mb-1">
               {this.props.label} Error
             </p>
-            <p className="text-xs text-panel-muted">
+            <p className="text-xs text-panel-muted mb-3">
               {this.state.error?.message ?? 'Component crashed'}
             </p>
             <button
-              className="mt-2 px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-500"
+              className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors"
               onClick={() => this.setState({ hasError: false })}
             >
               Retry
@@ -67,177 +85,235 @@ class ErrorBoundary extends Component<
     return this.props.children;
   }
 }
-export default function Dashboard() {
-  const selectedView = useBatteryStore((s) => s.selectedView);
-  const setSelectedView = useBatteryStore((s) => s.setSelectedView);
-  const { theme, toggleTheme } = useTheme();
 
-  // Activate keyboard shortcuts (Space, R, +/-, Esc)
-  useKeyboardShortcuts();
+/* ─── View transition wrapper ───────────────────────────────────────── */
 
+const viewTransition = {
+  initial: { opacity: 0, y: 8 },
+  animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: -8 },
+  transition: { duration: 0.2, ease: 'easeOut' as const },
+};
+
+/* ─── Resize Handle ─────────────────────────────────────────────────── */
+
+function ResizeHandle({ direction = 'vertical' }: { direction?: 'vertical' | 'horizontal' }) {
   return (
-    <div className="w-screen h-screen flex bg-panel-bg text-panel-text overflow-hidden">
-      {/* ─── Left Panel: Controls ────────────────────────────────── */}
-      <aside className="w-64 shrink-0 bg-panel-surface border-r border-panel-border flex flex-col">
-        <div className="p-3 border-b border-panel-border flex items-center justify-between">
-          <div>
-            <h1 className="text-sm font-bold text-white flex items-center gap-2">
-              <span className="text-lg">🔋</span>
-              Battery Digital Twin
-            </h1>
-            <p className="text-[10px] text-panel-muted mt-0.5">
-              3D Li-ion Simulation Engine
-            </p>
-          </div>
-          {/* Theme toggle */}
-          <button
-            onClick={toggleTheme}
-            className="p-1.5 rounded-lg bg-panel-bg hover:bg-panel-border transition-colors text-sm"
-            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-          >
-            {theme === 'dark' ? '☀️' : '🌙'}
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          <Controls />
-        </div>
-      </aside>
-
-      {/* ─── Center: 3D Scene + Charts ──────────────────────────── */}
-      <main className="flex-1 flex flex-col min-w-0">
-        {/* View toggle — wraps on narrow screens */}
-        <div className="flex flex-wrap items-center gap-1 p-1.5 bg-panel-surface border-b border-panel-border">
-          <ViewButton label="3D"     active={selectedView === '3d'}      onClick={() => setSelectedView('3d')} />
-          <ViewButton label="Charts" active={selectedView === 'charts'}  onClick={() => setSelectedView('charts')} />
-          <ViewButton label="Split"  active={selectedView === 'split'}   onClick={() => setSelectedView('split')} />
-          <ViewButton label="Nyquist" active={(selectedView as string) === 'nyquist'} onClick={() => setSelectedView('nyquist')} />
-          <ViewButton label="dQ/dV"  active={(selectedView as string) === 'dqdv'}    onClick={() => setSelectedView('dqdv')} />
-          <ViewButton label="BMS"    active={(selectedView as string) === 'bms'}     onClick={() => setSelectedView('bms')} />
-          <ViewButton label="CC-CV"  active={(selectedView as string) === 'cccv'}    onClick={() => setSelectedView('cccv')} />
-          <ViewButton label="RUL"    active={(selectedView as string) === 'rul'}     onClick={() => setSelectedView('rul')} />
-          <ViewButton label="ML Data" active={(selectedView as string) === 'ml-data'} onClick={() => setSelectedView('ml-data')} />
-          <span className="ml-auto text-[9px] text-panel-muted hidden sm:block">⌨ Space·R·+/−·Esc</span>
-        </div>
-
-        {/* Content area */}
-        <div className="flex-1 flex flex-col min-h-0">
-          {selectedView === '3d' && (
-            <div className="flex-1 relative">
-              <ErrorBoundary label="3D Scene">
-                <Scene />
-              </ErrorBoundary>
-            </div>
-          )}
-
-          {selectedView === 'charts' && (
-            <div className="flex-1 overflow-y-auto">
-              <ErrorBoundary label="Charts">
-                <Charts />
-              </ErrorBoundary>
-            </div>
-          )}
-
-          {selectedView === 'split' && (
-            <div className="flex-1 flex flex-col min-h-0">
-              <div className="relative" style={{ flex: '1.2 1 0%', minHeight: 0, overflow: 'hidden' }}>
-                <ErrorBoundary label="3D Scene">
-                  <Scene />
-                </ErrorBoundary>
-              </div>
-              <div className="border-t border-panel-border overflow-y-auto" style={{ flex: '0.8 1 0%', minHeight: 120 }}>
-                <ErrorBoundary label="Charts">
-                  <Charts />
-                </ErrorBoundary>
-              </div>
-            </div>
-          )}
-
-          {(selectedView as string) === 'nyquist' && (
-            <div className="flex-1 p-4">
-              <ErrorBoundary label="Nyquist Plot">
-                <NyquistPlot />
-              </ErrorBoundary>
-            </div>
-          )}
-
-          {(selectedView as string) === 'dqdv' && (
-            <div className="flex-1 p-4">
-              <ErrorBoundary label="dQ/dV Chart">
-                <DQDVChart />
-              </ErrorBoundary>
-            </div>
-          )}
-
-          {(selectedView as string) === 'bms' && (
-            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-              <ErrorBoundary label="BMS Dashboard">
-                <BMSDashboard />
-              </ErrorBoundary>
-            </div>
-          )}
-
-          {(selectedView as string) === 'cccv' && (
-            <div className="flex-1 overflow-y-auto">
-              <ErrorBoundary label="CC-CV Chart">
-                <CCCVChart />
-              </ErrorBoundary>
-            </div>
-          )}
-
-          {(selectedView as string) === 'rul' && (
-            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-              <ErrorBoundary label="RUL Analytics">
-                <RULPanel />
-              </ErrorBoundary>
-            </div>
-          )}
-
-          {(selectedView as string) === 'ml-data' && (
-            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-              <ErrorBoundary label="ML Dataset">
-                <MLExportPanel />
-              </ErrorBoundary>
-            </div>
-          )}
-        </div>
-      </main>
-
-      {/* ─── Right Panel: Status ─────────────────────────────────── */}
-      <aside className="w-60 shrink-0 bg-panel-surface border-l border-panel-border flex flex-col">
-        <div className="p-2 border-b border-panel-border">
-          <h2 className="text-xs font-semibold text-panel-muted uppercase tracking-wider">
-            Real-Time Metrics
-          </h2>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          <ErrorBoundary label="Status Panel">
-            <StatusPanel />
-          </ErrorBoundary>
-        </div>
-      </aside>
-    </div>
+    <PanelResizeHandle
+      className={`group relative flex items-center justify-center
+        ${direction === 'vertical' ? 'h-2 cursor-row-resize' : 'w-2 cursor-col-resize'}
+        hover:bg-blue-500/10 transition-colors`}
+    >
+      <div
+        className={`rounded-full bg-white/[0.1] group-hover:bg-blue-400/50 transition-colors
+          ${direction === 'vertical' ? 'w-8 h-[3px]' : 'h-8 w-[3px]'}`}
+      />
+    </PanelResizeHandle>
   );
 }
 
-function ViewButton({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
+/* ─── Dashboard ─────────────────────────────────────────────────────── */
+
+export default function Dashboard() {
+  const selectedView = useBatteryStore((s) => s.selectedView);
+  const [cmdPaletteOpen, setCmdPaletteOpen] = useState(false);
+  const [controlDrawerOpen, setControlDrawerOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Activate keyboard shortcuts
+  useKeyboardShortcuts();
+
+  // Fire toast notifications on sim events
+  useSimulationToasts();
+
+  // Ctrl+K global shortcut
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setCmdPaletteOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  const handleOpenSettings = useCallback(() => {
+    setControlDrawerOpen(true);
+  }, []);
+
   return (
-    <button
-      onClick={onClick}
-      className={`px-2 py-1 rounded text-[11px] font-medium transition-colors whitespace-nowrap ${
-        active
-          ? 'bg-blue-600 text-white'
-          : 'bg-panel-bg text-panel-muted hover:text-panel-text'
-      }`}
-    >
-      {label}
-    </button>
+    <div className="w-screen h-screen flex flex-col bg-[#080d1a] text-panel-text overflow-hidden">
+      {/* Sonner Toaster */}
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          style: {
+            background: 'rgba(15, 23, 41, 0.95)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            color: '#e2e8f0',
+            backdropFilter: 'blur(12px)',
+          },
+        }}
+        richColors
+      />
+
+      {/* Command Palette */}
+      <CommandPalette open={cmdPaletteOpen} onClose={() => setCmdPaletteOpen(false)} />
+
+      {/* Control Drawer */}
+      <ControlDrawer open={controlDrawerOpen} onClose={() => setControlDrawerOpen(false)} />
+
+      {/* ─── Main row: Sidebar + Content ─── */}
+      <div className="flex-1 flex min-h-0">
+        {/* Icon Sidebar */}
+        <Sidebar
+          onOpenCommandPalette={() => setCmdPaletteOpen(true)}
+          onOpenSettings={handleOpenSettings}
+        />
+
+        {/* ─── Content Area ─── */}
+        <main className="flex-1 flex flex-col min-w-0 min-h-0 relative">
+          {/* Toolbar */}
+          <div className="h-10 flex items-center justify-between px-4 bg-[#0c1222]/60 border-b border-white/[0.06] shrink-0"
+               style={{ backdropFilter: 'blur(12px)' }}>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-white capitalize">
+                {selectedView === 'ml-data' ? 'ML Dataset' :
+                 selectedView === 'dqdv' ? 'dQ/dV Analysis' :
+                 selectedView === 'cccv' ? 'CC-CV Charging' :
+                 selectedView === 'rul' ? 'RUL Prediction' :
+                 selectedView === 'bms' ? 'BMS Dashboard' :
+                 selectedView === 'nyquist' ? 'Nyquist (EIS)' :
+                 selectedView === '3d' ? '3D Visualization' :
+                 selectedView === 'charts' ? 'Time Series' :
+                 'Overview'}
+              </span>
+              <span className="text-[9px] text-panel-muted/50 border border-white/[0.06] rounded px-1.5 py-0.5">
+                {selectedView.toUpperCase()}
+              </span>
+            </div>
+
+            <button
+              onClick={() => setControlDrawerOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs
+                         text-panel-muted hover:text-white hover:bg-white/[0.06]
+                         border border-white/[0.06] transition-colors"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              Controls
+            </button>
+          </div>
+
+          {/* View content with animated transitions */}
+          <div className="flex-1 min-h-0 relative">
+            <AnimatePresence mode="wait">
+              {selectedView === 'split' && (
+                <motion.div key="split" className="absolute inset-0" {...viewTransition}>
+                  <PanelGroup orientation="vertical" className="h-full">
+                    <Panel defaultSize={60} minSize={30}>
+                      <div className="h-full relative">
+                        <ErrorBoundary label="3D Scene">
+                          <Scene />
+                        </ErrorBoundary>
+                        <MetricsTicker />
+                      </div>
+                    </Panel>
+                    <ResizeHandle direction="vertical" />
+                    <Panel defaultSize={40} minSize={20}>
+                      <PanelGroup orientation="horizontal" className="h-full">
+                        <Panel defaultSize={65} minSize={30}>
+                          <div className="h-full overflow-y-auto">
+                            <ErrorBoundary label="Charts">
+                              <Charts />
+                            </ErrorBoundary>
+                          </div>
+                        </Panel>
+                        <ResizeHandle direction="horizontal" />
+                        <Panel defaultSize={35} minSize={20}>
+                          <div className="h-full overflow-y-auto">
+                            <ErrorBoundary label="Status Panel">
+                              <StatusPanel />
+                            </ErrorBoundary>
+                          </div>
+                        </Panel>
+                      </PanelGroup>
+                    </Panel>
+                  </PanelGroup>
+                </motion.div>
+              )}
+
+              {selectedView === '3d' && (
+                <motion.div key="3d" className="absolute inset-0" {...viewTransition}>
+                  <ErrorBoundary label="3D Scene">
+                    <Scene />
+                  </ErrorBoundary>
+                  <MetricsTicker />
+                </motion.div>
+              )}
+
+              {selectedView === 'charts' && (
+                <motion.div key="charts" className="absolute inset-0 overflow-y-auto" {...viewTransition}>
+                  <ErrorBoundary label="Charts">
+                    <Charts />
+                  </ErrorBoundary>
+                </motion.div>
+              )}
+
+              {selectedView === 'nyquist' && (
+                <motion.div key="nyquist" className="absolute inset-0 p-4" {...viewTransition}>
+                  <ErrorBoundary label="Nyquist">
+                    <NyquistPlot />
+                  </ErrorBoundary>
+                </motion.div>
+              )}
+
+              {selectedView === 'dqdv' && (
+                <motion.div key="dqdv" className="absolute inset-0 p-4" {...viewTransition}>
+                  <ErrorBoundary label="dQ/dV">
+                    <DQDVChart />
+                  </ErrorBoundary>
+                </motion.div>
+              )}
+
+              {selectedView === 'bms' && (
+                <motion.div key="bms" className="absolute inset-0 overflow-hidden" {...viewTransition}>
+                  <ErrorBoundary label="BMS">
+                    <BMSDashboard />
+                  </ErrorBoundary>
+                </motion.div>
+              )}
+
+              {selectedView === 'cccv' && (
+                <motion.div key="cccv" className="absolute inset-0 overflow-y-auto" {...viewTransition}>
+                  <ErrorBoundary label="CC-CV">
+                    <CCCVChart />
+                  </ErrorBoundary>
+                </motion.div>
+              )}
+
+              {selectedView === 'rul' && (
+                <motion.div key="rul" className="absolute inset-0 overflow-hidden" {...viewTransition}>
+                  <ErrorBoundary label="RUL">
+                    <RULPanel />
+                  </ErrorBoundary>
+                </motion.div>
+              )}
+
+              {selectedView === 'ml-data' && (
+                <motion.div key="ml-data" className="absolute inset-0 overflow-hidden" {...viewTransition}>
+                  <ErrorBoundary label="ML Data">
+                    <MLExportPanel />
+                  </ErrorBoundary>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </main>
+      </div>
+
+      {/* ─── Bottom Status Bar ─── */}
+      <StatusBar />
+    </div>
   );
 }

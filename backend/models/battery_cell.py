@@ -95,6 +95,15 @@ class BatteryCell:
         self._soc_min_cycle: float = c.initial_soc
         self._soc_max_cycle: float = c.initial_soc
 
+        # Fault injection state
+        self._fault_short_active: bool = False
+        self._fault_short_resistance: float = float('inf')
+        self._fault_thermal_runaway: bool = False
+        self._fault_heat_ramp: float = 0.0
+        self._fault_heat_extra: float = 0.0
+        self._fault_sensor_v_drift: float = 0.0
+        self._fault_sensor_t_drift: float = 0.0
+
     def step(self, current: float, dt: float, ambient_temp_c: Optional[float] = None) -> Dict[str, Any]:
         """
         Advance the battery cell by one time step.
@@ -123,6 +132,16 @@ class BatteryCell:
         # === Step 1: Electrical Model (ECM) ===
         ecm_result = self.ecm.step(current, dt, T_k, cap_factor, res_factor)
 
+        # === Fault Effects: Internal Short Circuit ===
+        if self._fault_short_active and self._fault_short_resistance < 1e6:
+            v_terminal = ecm_result.get("voltage", 3.7)
+            i_short = v_terminal / self._fault_short_resistance
+            ecm_result["total_heat_w"] = ecm_result.get("total_heat_w", 0.0) + i_short * v_terminal
+            # Drain SOC via leakage
+            soc_drain = i_short * dt / (c.nominal_capacity_ah * 3600)
+            self.ecm.state[0] = max(0.0, self.ecm.state[0] - soc_drain)
+            ecm_result["soc"] = self.ecm.state[0]
+
         # Snapshot for pack-level queries
         self._last_current = current
         self._last_heat_w = ecm_result.get("total_heat_w", 0.0)
@@ -130,6 +149,10 @@ class BatteryCell:
         # === Step 2: Thermal Model ===
         if c.enable_thermal:
             Q_gen = ecm_result["total_heat_w"]
+            # Fault: thermal runaway ramp
+            if self._fault_thermal_runaway:
+                self._fault_heat_extra += self._fault_heat_ramp * dt
+                Q_gen += self._fault_heat_extra
             thermal_result = self.thermal.step(Q_gen, dt)
         else:
             thermal_result = {

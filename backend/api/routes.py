@@ -793,3 +793,152 @@ async def ml_dataset_schema():
             "format": "csv"
         }
     }
+
+
+# ─── Chemistry Presets ────────────────────────────────────────────────────────
+
+@router.get("/chemistries")
+async def list_available_chemistries():
+    """List all available battery chemistry presets."""
+    from models.chemistry import list_chemistries
+    return {"status": "ok", "chemistries": list_chemistries()}
+
+
+class ChemistrySelectRequest(BaseModel):
+    chemistry_id: str = Field(..., description="Chemistry preset ID (e.g., 'nmc622', 'lfp', 'nca')")
+    capacity_ah: float = Field(50.0, ge=1.0, le=500.0)
+    initial_soc: float = Field(0.8, ge=0.0, le=1.0)
+    initial_temperature_c: float = Field(25.0, ge=-20.0, le=60.0)
+
+
+@router.post("/configure/chemistry")
+async def configure_chemistry(req: ChemistrySelectRequest) -> SimulationResponse:
+    """Configure the battery cell using a chemistry preset.
+
+    This replaces the entire cell model with parameters calibrated
+    for the selected chemistry (OCV curve, resistance, degradation rates, etc.).
+    """
+    from models.chemistry import get_chemistry, CHEMISTRY_PRESETS
+    from models.battery_cell import BatteryCellConfig
+    from simulation.engine import SimulationEngine
+
+    try:
+        preset = get_chemistry(req.chemistry_id)
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Build cell config from preset
+    ecm = preset.ecm
+    ecm.capacity_ah = req.capacity_ah
+
+    cell_config = BatteryCellConfig(
+        cell_id="CELL_001",
+        chemistry=preset.name,
+        form_factor="Prismatic",
+        nominal_capacity_ah=req.capacity_ah,
+        nominal_voltage_v=preset.nominal_voltage,
+        energy_wh=req.capacity_ah * preset.nominal_voltage,
+        initial_soc=req.initial_soc,
+        initial_temperature_c=req.initial_temperature_c,
+        ecm_params=ecm,
+        thermal_params=preset.thermal,
+        degradation_params=preset.degradation,
+        spm_params=preset.spm,
+        enable_thermal=True,
+        enable_degradation=True,
+        enable_electrochemical=True,
+    )
+
+    engine = get_engine()
+    old_sim_config = engine.sim_config
+    new_engine = SimulationEngine(cell_config, old_sim_config)
+    set_engine(new_engine)
+
+    return SimulationResponse(
+        status="ok",
+        message=f"Chemistry set: {preset.name}",
+        data={
+            "chemistry": preset.name,
+            "cathode": preset.cathode,
+            "anode": preset.anode,
+            "nominal_voltage": preset.nominal_voltage,
+            "voltage_range": list(preset.voltage_range),
+            "energy_density_wh_kg": preset.energy_density_wh_kg,
+            "cycle_life": preset.cycle_life,
+            "capacity_ah": req.capacity_ah,
+        },
+    )
+
+
+# ─── Fault Injection ─────────────────────────────────────────────────────────
+
+class FaultInjectionRequest(BaseModel):
+    fault_type: str = Field(..., description="Fault type: 'internal_short', 'thermal_runaway', 'sensor_drift', 'capacity_fade'")
+    severity: float = Field(0.5, ge=0.0, le=1.0, description="Severity 0-1 (0=mild, 1=catastrophic)")
+    delay_s: float = Field(0.0, ge=0.0, description="Delay before fault activates [s]")
+
+
+@router.post("/fault/inject")
+async def inject_fault(req: FaultInjectionRequest) -> SimulationResponse:
+    """Inject a fault into the running simulation.
+
+    Supported fault types:
+      - internal_short: Adds a parallel leakage resistance (severity scales conductance)
+      - thermal_runaway: Forces exothermic self-heating above threshold
+      - sensor_drift: Adds progressive offset to voltage/temperature readings
+      - capacity_fade: Instantly reduces effective capacity
+    """
+    engine = get_engine()
+    cell = engine.cell
+
+    if req.fault_type == "internal_short":
+        # Model ISC as additional parallel resistance draining current
+        # severity=1.0 → short resistance = 0.1 Ohm (catastrophic)
+        # severity=0.1 → short resistance = 100 Ohm (mild micro-short)
+        r_short = max(0.1, 100.0 * (1.0 - req.severity))
+        cell._fault_short_resistance = r_short
+        cell._fault_short_active = True
+        msg = f"Internal short injected: R_short={r_short:.1f} Ω"
+
+    elif req.fault_type == "thermal_runaway":
+        # Force heat generation ramp → thermal runaway cascade
+        heat_ramp_w_per_s = 0.5 + req.severity * 10.0  # W/s ramp rate
+        cell._fault_thermal_runaway = True
+        cell._fault_heat_ramp = heat_ramp_w_per_s
+        cell._fault_heat_extra = 0.0
+        msg = f"Thermal runaway initiated: ramp={heat_ramp_w_per_s:.1f} W/s"
+
+    elif req.fault_type == "sensor_drift":
+        # Progressive voltage/temp offset
+        v_drift = req.severity * 0.1  # up to 100mV offset
+        t_drift = req.severity * 5.0  # up to 5°C offset
+        cell._fault_sensor_v_drift = v_drift
+        cell._fault_sensor_t_drift = t_drift
+        msg = f"Sensor drift injected: ΔV={v_drift*1000:.0f}mV, ΔT={t_drift:.1f}°C"
+
+    elif req.fault_type == "capacity_fade":
+        # Instant capacity loss
+        fade_pct = req.severity * 30.0  # up to 30% instant fade
+        if hasattr(cell, 'degradation'):
+            cell.degradation.total_capacity_loss += fade_pct / 100.0
+        msg = f"Capacity fade injected: {fade_pct:.1f}% instant loss"
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown fault type: {req.fault_type}")
+
+    return SimulationResponse(status="ok", message=msg, data={"fault_type": req.fault_type, "severity": req.severity})
+
+
+@router.post("/fault/clear")
+async def clear_faults() -> SimulationResponse:
+    """Clear all injected faults."""
+    engine = get_engine()
+    cell = engine.cell
+    cell._fault_short_active = False
+    cell._fault_short_resistance = float('inf')
+    cell._fault_thermal_runaway = False
+    cell._fault_heat_ramp = 0.0
+    cell._fault_heat_extra = 0.0
+    cell._fault_sensor_v_drift = 0.0
+    cell._fault_sensor_t_drift = 0.0
+    return SimulationResponse(status="ok", message="All faults cleared")
