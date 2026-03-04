@@ -739,30 +739,6 @@ export default function PackView3D() {
     return packData;
   }, [wsCellStates, wsThermalLinks, packSeries, packParallel, packData]);
 
-  /* ---- Grid layout: cols = n_series, rows = n_parallel ---- */
-  const layout = useMemo(() => {
-    if (!effectivePackData) return { cols: 0, rows: 0 };
-    const cols = effectivePackData.n_series ?? Math.ceil(Math.sqrt(effectivePackData.n_cells));
-    const rows = effectivePackData.n_parallel ?? Math.ceil(effectivePackData.n_cells / cols);
-    return { cols, rows };
-  }, [effectivePackData]);
-
-  /* ---- Cell positions map ---- */
-  const cellPositions = useMemo(() => {
-    const map = new Map<string, [number, number, number]>();
-    if (!effectivePackData) return map;
-    const halfW = ((layout.cols - 1) * SPACING_X) / 2;
-    const halfZ = ((layout.rows - 1) * SPACING_Z) / 2;
-    effectivePackData.cells.forEach((cell, idx) => {
-      const col = idx % layout.cols;
-      const row = Math.floor(idx / layout.cols);
-      const x = col * SPACING_X - halfW;
-      const z = row * SPACING_Z - halfZ;
-      map.set(cell.cell_id, [x, 0, z]);
-    });
-    return map;
-  }, [effectivePackData, layout]);
-
   // Keep a reference to the last valid pack data so cells don't vanish
   // during brief WS gaps or data transitions.
   const renderData = useMemo(() => {
@@ -772,6 +748,32 @@ export default function PackView3D() {
     }
     return lastGoodPackRef.current;
   }, [effectivePackData]);
+
+  /* ---- Grid layout: cols = n_series, rows = n_parallel ---- */
+  // MUST depend on renderData (not effectivePackData) — effectivePackData
+  // can be null during WS reconnections which makes cols=0 → NaN positions.
+  const layout = useMemo(() => {
+    if (!renderData) return { cols: 1, rows: 1 };
+    const cols = Math.max(renderData.n_series ?? Math.ceil(Math.sqrt(renderData.n_cells)), 1);
+    const rows = Math.max(renderData.n_parallel ?? Math.ceil(renderData.n_cells / cols), 1);
+    return { cols, rows };
+  }, [renderData]);
+
+  /* ---- Cell positions map ---- */
+  const cellPositions = useMemo(() => {
+    const map = new Map<string, [number, number, number]>();
+    if (!renderData) return map;
+    const halfW = ((layout.cols - 1) * SPACING_X) / 2;
+    const halfZ = ((layout.rows - 1) * SPACING_Z) / 2;
+    renderData.cells.forEach((cell, idx) => {
+      const col = idx % layout.cols;
+      const row = Math.floor(idx / layout.cols);
+      const x = col * SPACING_X - halfW;
+      const z = row * SPACING_Z - halfZ;
+      map.set(cell.cell_id, [x, 0, z]);
+    });
+    return map;
+  }, [renderData, layout]);
 
   if (!renderData || renderData.cells.length === 0) return null;
 
