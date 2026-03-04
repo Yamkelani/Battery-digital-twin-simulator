@@ -12,7 +12,7 @@
 import { useState, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Rocket, Snowflake, Zap, Sun, Car, Factory, Battery, Timer,
+  Rocket, Snowflake, Zap, Sun, Car, Factory, Battery, Timer, Droplets,
   ArrowRight, ArrowLeft, Check, Play, Thermometer, Gauge, Info,
 } from 'lucide-react';
 import { API_BASE } from '../config';
@@ -34,6 +34,7 @@ interface ScenarioDef {
     ambientTemp: number;
     cRate: number;
     speed: number;
+    humidity: number;
     enableThermal: boolean;
     enableDegradation: boolean;
     enableElectrochemical: boolean;
@@ -54,7 +55,7 @@ const SCENARIOS: ScenarioDef[] = [
     ],
     defaults: {
       profile: 'constant_discharge', soc: 0.9, temp: -5, ambientTemp: -10,
-      cRate: 0.5, speed: 20, enableThermal: true, enableDegradation: true,
+      cRate: 0.5, speed: 20, humidity: 30, enableThermal: true, enableDegradation: true,
       enableElectrochemical: true, degradationAccel: 1,
     },
   },
@@ -70,7 +71,7 @@ const SCENARIOS: ScenarioDef[] = [
     ],
     defaults: {
       profile: 'cccv_charge', soc: 0.15, temp: 25, ambientTemp: 25,
-      cRate: 2.0, speed: 30, enableThermal: true, enableDegradation: true,
+      cRate: 2.0, speed: 30, humidity: 50, enableThermal: true, enableDegradation: true,
       enableElectrochemical: true, degradationAccel: 1,
     },
   },
@@ -86,7 +87,7 @@ const SCENARIOS: ScenarioDef[] = [
     ],
     defaults: {
       profile: 'drive_cycle', soc: 0.85, temp: 25, ambientTemp: 30,
-      cRate: 1.0, speed: 40, enableThermal: true, enableDegradation: true,
+      cRate: 1.0, speed: 40, humidity: 55, enableThermal: true, enableDegradation: true,
       enableElectrochemical: true, degradationAccel: 1,
     },
   },
@@ -102,7 +103,7 @@ const SCENARIOS: ScenarioDef[] = [
     ],
     defaults: {
       profile: 'solar_storage', soc: 0.4, temp: 22, ambientTemp: 22,
-      cRate: 0.5, speed: 100, enableThermal: true, enableDegradation: true,
+      cRate: 0.5, speed: 100, humidity: 45, enableThermal: true, enableDegradation: true,
       enableElectrochemical: true, degradationAccel: 1,
     },
   },
@@ -118,7 +119,7 @@ const SCENARIOS: ScenarioDef[] = [
     ],
     defaults: {
       profile: 'cycle_aging', soc: 0.9, temp: 35, ambientTemp: 25,
-      cRate: 1.0, speed: 200, enableThermal: true, enableDegradation: true,
+      cRate: 1.0, speed: 200, humidity: 85, enableThermal: true, enableDegradation: true,
       enableElectrochemical: true, degradationAccel: 100,
     },
   },
@@ -134,7 +135,7 @@ const SCENARIOS: ScenarioDef[] = [
     ],
     defaults: {
       profile: 'constant_discharge', soc: 1.0, temp: 40, ambientTemp: 45,
-      cRate: 3.0, speed: 15, enableThermal: true, enableDegradation: true,
+      cRate: 3.0, speed: 15, humidity: 60, enableThermal: true, enableDegradation: true,
       enableElectrochemical: true, degradationAccel: 1,
     },
   },
@@ -191,13 +192,12 @@ export default function ScenarioWizard() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          capacity_ah: 50,
-          soc: params.soc,
-          temperature_c: params.temp,
+          nominal_capacity_ah: 50,
+          initial_soc: params.soc,
+          initial_temperature_c: params.temp,
           enable_thermal: params.enableThermal,
           enable_degradation: params.enableDegradation,
           enable_electrochemical: params.enableElectrochemical,
-          degradation_acceleration: params.degradationAccel,
         }),
       });
 
@@ -213,14 +213,18 @@ export default function ScenarioWizard() {
       await fetch(`${API_BASE}/profile`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profile_id: params.profile, params: profileParams }),
+        body: JSON.stringify({ profile_type: params.profile, params: profileParams }),
       });
 
-      // 3. Set speed
+      // 3. Set speed & degradation acceleration
       await fetch(`${API_BASE}/configure/simulation`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ speed: params.speed }),
+        body: JSON.stringify({
+          speed_multiplier: params.speed,
+          degradation_acceleration: params.degradationAccel,
+          humidity_pct: params.humidity,
+        }),
       });
 
       // 4. Navigate to overview
@@ -339,6 +343,7 @@ export default function ScenarioWizard() {
                 { key: 'ambientTemp', label: 'Ambient Temp', value: params.ambientTemp, min: -20, max: 60, step: 1, unit: '°C', format: (v: number) => `${v}°C`, color: '#f97316', icon: Thermometer },
                 { key: 'cRate', label: 'C-Rate', value: params.cRate, min: 0.1, max: 5, step: 0.1, unit: 'C', format: (v: number) => `${v.toFixed(1)}C`, color: '#f59e0b', icon: Zap },
                 { key: 'speed', label: 'Sim Speed', value: params.speed, min: 1, max: 200, step: 1, unit: 'x', format: (v: number) => `${v}x`, color: '#3b82f6', icon: Gauge },
+                { key: 'humidity', label: 'Humidity', value: params.humidity, min: 0, max: 100, step: 5, unit: '%RH', format: (v: number) => `${v}%`, color: '#06b6d4', icon: Droplets },
                 { key: 'degradationAccel', label: 'Aging Accel', value: params.degradationAccel, min: 1, max: 1000, step: 10, unit: 'x', format: (v: number) => `${v}x`, color: '#a78bfa', icon: Timer },
               ].map((ctrl) => {
                 const Icon = ctrl.icon;
@@ -430,6 +435,7 @@ export default function ScenarioWizard() {
                   { label: 'Ambient', value: `${params.ambientTemp}°C` },
                   { label: 'C-Rate', value: `${params.cRate.toFixed(1)}C` },
                   { label: 'Speed', value: `${params.speed}x` },
+                  { label: 'Humidity', value: `${params.humidity}% RH` },
                   { label: 'Aging Accel', value: `${params.degradationAccel}x` },
                   { label: 'Thermal', value: params.enableThermal ? 'ON' : 'OFF' },
                 ].map((item) => (

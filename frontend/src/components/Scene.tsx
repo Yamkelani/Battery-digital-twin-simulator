@@ -21,6 +21,7 @@ import HeatMap from './HeatMap';
 import PackView3D from './PackView3D';
 import { useBatteryStore } from '../hooks/useBatteryState';
 import { API_BASE } from '../config';
+import CellEffectsLegend from './CellEffectsLegend';
 
 /** Simple grid floor using plain Three.js */
 function GridFloor() {
@@ -233,6 +234,9 @@ export default function Scene() {
           {cutawayMode ? '🔬 Solid View' : '🔍 X-Ray Mode'}
         </button>
       )}
+
+      {/* Visual effects legend */}
+      <CellEffectsLegend />
 
       <Canvas
         camera={{

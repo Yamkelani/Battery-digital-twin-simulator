@@ -63,6 +63,11 @@ export default function BatteryCell3D({ position = [0, 0, 0], cellState, staticP
   const heatmapMatRef = useRef<THREE.MeshStandardMaterial>(null);
   const platingRef = useRef<THREE.Mesh>(null);
   const platingMatRef = useRef<THREE.MeshStandardMaterial>(null);
+  const humidityRef = useRef<THREE.Mesh>(null);
+  const humidityMatRef = useRef<THREE.MeshStandardMaterial>(null);
+  const accelRingRef = useRef<THREE.Mesh>(null);
+  const accelRingMatRef = useRef<THREE.MeshStandardMaterial>(null);
+  const dropletGroupRef = useRef<THREE.Group>(null);
 
   const batteryState = useBatteryStore((s) => s.batteryState);
   const cutawayMode = useBatteryStore((s) => s.cutawayMode);
@@ -96,6 +101,9 @@ export default function BatteryCell3D({ position = [0, 0, 0], cellState, staticP
   const resistanceFactor = _safe(cellState?.resistanceFactor ?? batteryState?.deg_resistance_factor, 1.0);
   const cycleLoss = _safe(cellState?.cycleLoss ?? batteryState?.deg_cycle_loss_pct, 0);
   const heatGenW = _safe(cellState?.heatGenW ?? batteryState?.heat_total_w, 0);
+  const humidityPct = _safe(batteryState?.thermal_humidity_pct, 50);
+  const condensationActive = batteryState?.thermal_condensation_active ?? false;
+  const degradationTimeFactor = _safe(batteryState?.degradation_time_factor, 1);
   const isCharging = current < 0;
   const isDischarging = current > 0;
 
@@ -254,6 +262,10 @@ export default function BatteryCell3D({ position = [0, 0, 0], cellState, staticP
 
     // ── SEI layer — amplified visual: amber crust that darkens to brown ──
     // Uses seiVisual (non-linear amplification) so even small loss is visible
+    // Pulse speed increases when aging is accelerated
+    const seiPulseSpeed = degradationTimeFactor > 1.5
+      ? 1.2 + Math.min(Math.log10(degradationTimeFactor), 3) * 2
+      : 1.2;
     if (seiRef.current && seiMatRef.current) {
       const growFactor = 1 + seiVisual * 0.25; // up to +25% shell expansion
       seiRef.current.scale.set(growFactor, growFactor, growFactor);
@@ -267,7 +279,7 @@ export default function BatteryCell3D({ position = [0, 0, 0], cellState, staticP
       seiMatRef.current.color.setRGB(r, g, b);
       seiMatRef.current.emissive.setRGB(r * 0.6, g * 0.5, b * 0.3);
       seiMatRef.current.emissiveIntensity = 0.1 + seiVisual * 0.4
-        + (seiVisual > 0.01 ? Math.sin(t * 1.2) * 0.05 * seiVisual : 0); // subtle pulse = active growth
+        + (seiVisual > 0.01 ? Math.sin(t * seiPulseSpeed) * 0.05 * seiVisual : 0); // pulse = active growth; faster when accelerated
       // Surface gets rougher/crustier as SEI builds
       seiMatRef.current.roughness = 0.5 + seiVisual * 0.5;
       seiMatRef.current.metalness = Math.max(0.1 - seiVisual * 0.1, 0);
@@ -321,7 +333,102 @@ export default function BatteryCell3D({ position = [0, 0, 0], cellState, staticP
         heatmapTexture.needsUpdate = true;
       }
     }
+
+    // ── Humidity Fog Layer — blue-green mist that intensifies with RH ──
+    if (humidityRef.current && humidityMatRef.current) {
+      const rhNorm = Math.max(humidityPct - 30, 0) / 70; // visible from 30% RH upward
+      humidityMatRef.current.opacity = rhNorm * 0.25 + (rhNorm > 0.3 ? Math.sin(t * 0.8) * 0.04 : 0);
+      // Color shifts: low humidity = faint cyan, high humidity = deep teal, condensation = blue-white
+      if (condensationActive) {
+        humidityMatRef.current.color.setRGB(0.6, 0.8, 1.0);
+        humidityMatRef.current.emissiveIntensity = 0.15 + Math.sin(t * 2) * 0.05;
+        humidityMatRef.current.emissive.setRGB(0.3, 0.5, 0.7);
+      } else {
+        const r = 0.05 + rhNorm * 0.1;
+        const g = 0.35 + rhNorm * 0.15;
+        const b = 0.4 + rhNorm * 0.2;
+        humidityMatRef.current.color.setRGB(r, g, b);
+        humidityMatRef.current.emissiveIntensity = rhNorm * 0.1;
+        humidityMatRef.current.emissive.setRGB(r * 0.5, g * 0.5, b * 0.5);
+      }
+      // Subtle breathing/swirl at high humidity
+      const swirl = 1 + (rhNorm > 0.2 ? Math.sin(t * 0.6) * 0.01 * rhNorm : 0);
+      humidityRef.current.scale.set(swirl, swirl, swirl);
+    }
+
+    // ── Condensation Droplets — small spheres that appear/pulse on cell surface ──
+    if (dropletGroupRef.current) {
+      const showDroplets = condensationActive || humidityPct > 70;
+      dropletGroupRef.current.visible = showDroplets;
+      if (showDroplets) {
+        // Gentle shimmer
+        dropletGroupRef.current.children.forEach((child, i) => {
+          const mesh = child as THREE.Mesh;
+          const mat = mesh.material as THREE.MeshStandardMaterial;
+          const phase = i * 1.37; // golden-ratio offset for organic look
+          const shimmer = 0.4 + Math.sin(t * 2.5 + phase) * 0.3;
+          mat.opacity = shimmer;
+          // Slight scale pulse
+          const s = 0.8 + Math.sin(t * 1.8 + phase) * 0.2;
+          mesh.scale.setScalar(s);
+        });
+      }
+    }
+
+    // ── Accelerated Aging Ring — fast-forward indicator when time_factor > 1 ──
+    if (accelRingRef.current && accelRingMatRef.current) {
+      const isAccelerated = degradationTimeFactor > 1.5;
+      accelRingRef.current.visible = isAccelerated;
+      if (isAccelerated) {
+        const accelNorm = Math.min(Math.log10(degradationTimeFactor) / 3, 1); // 0..1 for 1x..1000x
+        // Fast spinning ring — rotation speed proportional to acceleration factor
+        accelRingRef.current.rotation.z += delta * (2 + accelNorm * 8);
+        // Pulsing opacity
+        accelRingMatRef.current.opacity = 0.15 + accelNorm * 0.3 + Math.sin(t * (3 + accelNorm * 6)) * 0.1;
+        // Color: blue (mild accel) → magenta (extreme accel)
+        const ar = 0.3 + accelNorm * 0.6;
+        const ag = 0.2 * (1 - accelNorm);
+        const ab = 0.8;
+        accelRingMatRef.current.color.setRGB(ar, ag, ab);
+        accelRingMatRef.current.emissive.setRGB(ar * 0.7, ag * 0.5, ab * 0.7);
+        accelRingMatRef.current.emissiveIntensity = 0.3 + accelNorm * 0.5;
+      }
+    }
   });
+
+  // Stable droplet positions (generated once)
+  const dropletPositions = useMemo(() => {
+    const positions: [number, number, number][] = [];
+    // Seed deterministic positions on cell surfaces
+    const rng = (seed: number) => {
+      let s = seed;
+      return () => { s = (s * 16807 + 0) % 2147483647; return s / 2147483647; };
+    };
+    const rand = rng(42);
+    for (let i = 0; i < 12; i++) {
+      const face = Math.floor(rand() * 4); // top, front, back, sides
+      let x: number, y: number, z: number;
+      if (face === 0) { // top
+        x = (rand() - 0.5) * cellW * 0.9;
+        y = cellH / 2 + 0.02;
+        z = (rand() - 0.5) * cellD * 0.9;
+      } else if (face === 1) { // front
+        x = (rand() - 0.5) * cellW * 0.9;
+        y = (rand() - 0.5) * cellH * 0.8;
+        z = cellD / 2 + 0.02;
+      } else if (face === 2) { // back
+        x = (rand() - 0.5) * cellW * 0.9;
+        y = (rand() - 0.5) * cellH * 0.8;
+        z = -(cellD / 2 + 0.02);
+      } else { // side
+        x = (rand() > 0.5 ? 1 : -1) * (cellW / 2 + 0.02);
+        y = (rand() - 0.5) * cellH * 0.8;
+        z = (rand() - 0.5) * cellD * 0.9;
+      }
+      positions.push([x, y, z]);
+    }
+    return positions;
+  }, [cellW, cellH, cellD]);
 
   const layerThickness = cellD * 0.15;
   const layerGap = cellD * 0.02;
@@ -508,6 +615,57 @@ export default function BatteryCell3D({ position = [0, 0, 0], cellState, staticP
           opacity={Math.min(0.15 + Math.max(0, (tempC - 25) / 30) * 0.45, 0.65)}
           roughness={1}
           side={THREE.FrontSide}
+          depthWrite={false}
+        />
+      </mesh>
+
+      {/* ── Humidity Fog Layer — cyan mist around cell, intensity driven by RH ── */}
+      <mesh ref={humidityRef}>
+        <boxGeometry args={[cellW * 1.08, cellH * 1.08, cellD * 1.08]} />
+        <meshStandardMaterial
+          ref={humidityMatRef as any}
+          color="#1a8a8a"
+          transparent
+          opacity={0}
+          roughness={1}
+          metalness={0}
+          emissive="#1a6a7a"
+          emissiveIntensity={0}
+          side={THREE.FrontSide}
+          depthWrite={false}
+        />
+      </mesh>
+
+      {/* ── Condensation Droplets — small water spheres on cell surface ── */}
+      <group ref={dropletGroupRef} visible={false}>
+        {dropletPositions.map((pos, i) => (
+          <mesh key={i} position={pos}>
+            <sphereGeometry args={[0.03 + (i % 3) * 0.01, 8, 8]} />
+            <meshStandardMaterial
+              color="#80d0ff"
+              transparent
+              opacity={0.5}
+              metalness={0.3}
+              roughness={0.1}
+              emissive="#40a0cc"
+              emissiveIntensity={0.2}
+              depthWrite={false}
+            />
+          </mesh>
+        ))}
+      </group>
+
+      {/* ── Accelerated Aging Ring — spinning ring indicator for time-compressed aging ── */}
+      <mesh ref={accelRingRef} position={[0, -cellH / 2 - 0.15, 0]} rotation={[Math.PI / 2, 0, 0]} visible={false}>
+        <torusGeometry args={[cellW * 0.45, 0.03, 8, 32]} />
+        <meshStandardMaterial
+          ref={accelRingMatRef as any}
+          color="#7c3aed"
+          transparent
+          opacity={0}
+          emissive="#7c3aed"
+          emissiveIntensity={0.4}
+          side={THREE.DoubleSide}
           depthWrite={false}
         />
       </mesh>

@@ -139,13 +139,12 @@ export default function QuickStartPresets() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          capacity_ah: 50,
-          soc: preset.config.soc,
-          temperature_c: preset.config.temp,
+          nominal_capacity_ah: 50,
+          initial_soc: preset.config.soc,
+          initial_temperature_c: preset.config.temp,
           enable_thermal: true,
           enable_degradation: preset.config.enableDegradation,
           enable_electrochemical: true,
-          degradation_acceleration: preset.config.degradationAccel,
         }),
       });
 
@@ -153,14 +152,17 @@ export default function QuickStartPresets() {
       await fetch(`${API_BASE}/profile`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profile_id: preset.config.profile, params: preset.config.profileParams }),
+        body: JSON.stringify({ profile_type: preset.config.profile, params: preset.config.profileParams }),
       });
 
-      // Set speed
+      // Set speed & degradation acceleration
       await fetch(`${API_BASE}/configure/simulation`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ speed: preset.config.speed }),
+        body: JSON.stringify({
+          speed_multiplier: preset.config.speed,
+          degradation_acceleration: preset.config.degradationAccel,
+        }),
       });
 
       // Navigate to best view

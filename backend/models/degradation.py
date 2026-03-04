@@ -79,6 +79,14 @@ class DegradationParameters:
     # Plating capacity loss rate [fraction / (Ah * K)]
     k_plating: float = 2.0e-6
 
+    # === Humidity / Corrosion ===
+    # Corrosion acceleration factor per %RH above 60%
+    # Moisture ingress accelerates connector corrosion and can degrade
+    # seal integrity, increasing self-discharge and resistance.
+    k_humidity_corrosion: float = 1.5e-7   # resistance growth per %RH·s above threshold
+    humidity_threshold_pct: float = 60.0    # corrosion accelerates above this RH
+    k_humidity_self_discharge: float = 5.0e-8  # capacity loss from moisture-induced self-discharge
+
     # === General Limits ===
     # End of life capacity retention threshold
     eol_capacity_fraction: float = 0.70  # 70% = end of life (more lenient)
@@ -107,9 +115,11 @@ class DegradationModel:
         self.sei_capacity_loss: float = 0.0     # Fraction lost to SEI
         self.cycle_capacity_loss: float = 0.0   # Fraction lost to cycling
         self.plating_capacity_loss: float = 0.0 # Fraction lost to plating
+        self.humidity_capacity_loss: float = 0.0 # Fraction lost to humidity corrosion
 
         self.sei_resistance_increase: float = 0.0   # Ohm
         self.cycle_resistance_increase: float = 0.0  # Ohm
+        self.humidity_resistance_increase: float = 0.0  # Ohm from corrosion
 
         # History tracking
         self.capacity_history: list = []
@@ -118,13 +128,15 @@ class DegradationModel:
     @property
     def capacity_retention(self) -> float:
         """Remaining capacity as fraction of nominal (1.0 = fresh)."""
-        total_loss = self.sei_capacity_loss + self.cycle_capacity_loss + self.plating_capacity_loss
+        total_loss = (self.sei_capacity_loss + self.cycle_capacity_loss +
+                      self.plating_capacity_loss + self.humidity_capacity_loss)
         return max(1.0 - total_loss, 0.0)
 
     @property
     def resistance_factor(self) -> float:
         """Resistance increase factor (1.0 = fresh)."""
-        r_total = 1.0 + self.sei_resistance_increase + self.cycle_resistance_increase
+        r_total = (1.0 + self.sei_resistance_increase +
+                   self.cycle_resistance_increase + self.humidity_resistance_increase)
         return min(r_total, self.params.max_resistance_factor)
 
     @property
@@ -210,8 +222,31 @@ class DegradationModel:
         rate = self.params.k_plating * (T_factor + c_factor) * (1.0 + soc_factor) * abs(current) / 3600.0
         return rate
 
+    def _humidity_corrosion_rate(self, humidity_pct: float, T: float) -> tuple:
+        """Humidity-driven corrosion rates for capacity loss and resistance growth.
+
+        Moisture ingress past seals accelerates:
+        - Connector/tab corrosion → resistance growth
+        - Electrolyte contamination → self-discharge → capacity loss
+        - Both are exponentially worse at high humidity and high temperature.
+
+        Returns:
+            (capacity_loss_rate, resistance_growth_rate)
+        """
+        excess_rh = max(0.0, humidity_pct - self.params.humidity_threshold_pct)
+        if excess_rh < 0.01:
+            return 0.0, 0.0
+
+        # Temperature accelerates corrosion (Arrhenius-like)
+        temp_factor = self._arrhenius_factor(self.params.Ea_sei, T) * 0.3  # reuse SEI activation energy
+
+        cap_rate = self.params.k_humidity_self_discharge * excess_rh * temp_factor
+        res_rate = self.params.k_humidity_corrosion * excess_rh * temp_factor
+
+        return cap_rate, res_rate
+
     def step(self, current: float, voltage: float, T: float, soc: float, dt: float,
-             delta_soc: float = 0.5) -> dict:
+             delta_soc: float = 0.5, humidity_pct: float = 50.0) -> dict:
         """
         Update degradation state for one time step.
 
@@ -243,6 +278,11 @@ class DegradationModel:
         self.cycle_capacity_loss += cyc_rate * dt
         self.plating_capacity_loss += plating_rate * dt
 
+        # Humidity / corrosion effects
+        hum_cap_rate, hum_res_rate = self._humidity_corrosion_rate(humidity_pct, T)
+        self.humidity_capacity_loss += hum_cap_rate * dt
+        self.humidity_resistance_increase += hum_res_rate * dt
+
         # Update resistance increases
         sei_r_rate = (self.params.k_sei_resistance * self._arrhenius_factor(self.params.Ea_sei, T) *
                       0.5 / max(np.sqrt(self.total_time_s), 0.01))
@@ -258,6 +298,7 @@ class DegradationModel:
             "sei_loss_pct": self.sei_capacity_loss * 100,
             "cycle_loss_pct": self.cycle_capacity_loss * 100,
             "plating_loss_pct": self.plating_capacity_loss * 100,
+            "humidity_loss_pct": self.humidity_capacity_loss * 100,
             "total_ah_throughput": self.total_ah_throughput,
             "equivalent_cycles": self.total_cycles,
             "total_energy_wh": self.total_energy_wh,
@@ -273,9 +314,11 @@ class DegradationModel:
             "sei_contribution_pct": self.sei_capacity_loss * 100,
             "cycle_contribution_pct": self.cycle_capacity_loss * 100,
             "plating_contribution_pct": self.plating_capacity_loss * 100,
+            "humidity_contribution_pct": self.humidity_capacity_loss * 100,
             "resistance_increase_pct": (self.resistance_factor - 1.0) * 100,
             "sei_resistance_pct": self.sei_resistance_increase * 100,
             "cycle_resistance_pct": self.cycle_resistance_increase * 100,
+            "humidity_resistance_pct": self.humidity_resistance_increase * 100,
         }
 
     def reset(self):
@@ -287,7 +330,9 @@ class DegradationModel:
         self.sei_capacity_loss = 0.0
         self.cycle_capacity_loss = 0.0
         self.plating_capacity_loss = 0.0
+        self.humidity_capacity_loss = 0.0
         self.sei_resistance_increase = 0.0
         self.cycle_resistance_increase = 0.0
+        self.humidity_resistance_increase = 0.0
         self.capacity_history.clear()
         self.resistance_history.clear()

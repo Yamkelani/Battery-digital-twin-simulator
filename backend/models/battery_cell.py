@@ -167,7 +167,13 @@ class BatteryCell:
                 "thermal_gradient_c": 0.0,
                 "overtemp_warning": False,
                 "thermal_runaway_risk": False,
+                "humidity_pct": self.thermal.params.humidity_pct,
+                "dew_point_c": 0.0,
+                "condensation_active": False,
             }
+
+        # Get current humidity for degradation model
+        humidity_pct = thermal_result.get("humidity_pct", self.thermal.params.humidity_pct)
 
         # === Step 3: Degradation Model ===
         if c.enable_degradation:
@@ -187,6 +193,7 @@ class BatteryCell:
                 soc=soc,
                 dt=effective_dt,
                 delta_soc=max(delta_soc, 0.1),
+                humidity_pct=humidity_pct,
             )
         else:
             degradation_result = {
@@ -196,6 +203,7 @@ class BatteryCell:
                 "sei_loss_pct": 0.0,
                 "cycle_loss_pct": 0.0,
                 "plating_loss_pct": 0.0,
+                "humidity_loss_pct": 0.0,
                 "total_ah_throughput": 0.0,
                 "equivalent_cycles": 0.0,
                 "total_energy_wh": 0.0,
@@ -264,6 +272,9 @@ class BatteryCell:
             "heat_polarization_w": ecm_result["polarization_loss_w"],
             "heat_entropic_w": ecm_result["entropic_heat_w"],
             "heat_total_w": ecm_result["total_heat_w"],
+
+            # Aging acceleration factor (for frontend visual speed indication)
+            "degradation_time_factor": c.degradation_time_factor,
 
             # Temperature distribution for 3D heatmap
             "temperature_distribution": (

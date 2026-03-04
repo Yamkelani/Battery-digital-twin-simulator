@@ -46,6 +46,7 @@ class SimConfigRequest(BaseModel):
     speed_multiplier: float = Field(1.0, ge=0.1, le=1000.0, description="Simulation speed")
     max_sim_time_s: float = Field(86400.0, ge=60.0, le=8640000.0, description="Max duration [s]")
     degradation_acceleration: float = Field(1.0, ge=1.0, le=10000.0)
+    humidity_pct: float = Field(50.0, ge=0.0, le=100.0, description="Ambient relative humidity [%RH]")
 
 
 class ProfileRequest(BaseModel):
@@ -167,6 +168,13 @@ async def configure_simulation(config: SimConfigRequest) -> SimulationResponse:
     engine.sim_config.max_sim_time_s = config.max_sim_time_s
     engine.sim_config.degradation_acceleration = config.degradation_acceleration
 
+    # Propagate degradation acceleration to the cell model's time factor
+    # so that battery_cell.step() applies accelerated aging correctly
+    engine.cell.config.degradation_time_factor = config.degradation_acceleration
+
+    # Propagate humidity to thermal model
+    engine.cell.thermal.params.humidity_pct = config.humidity_pct
+
     return SimulationResponse(
         status="ok",
         message="Simulation parameters updated",
@@ -174,6 +182,8 @@ async def configure_simulation(config: SimConfigRequest) -> SimulationResponse:
             "dt": config.dt,
             "speed": config.speed_multiplier,
             "max_time_s": config.max_sim_time_s,
+            "degradation_acceleration": config.degradation_acceleration,
+            "humidity_pct": config.humidity_pct,
         },
     )
 

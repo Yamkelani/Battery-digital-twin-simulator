@@ -57,6 +57,9 @@ class ThermalParameters:
     # Ambient temperature [K]
     T_ambient_k: float = 298.15              # 25°C
 
+    # Humidity [% RH]
+    humidity_pct: float = 50.0               # Relative humidity 0-100%
+
     # Temperature limits
     T_max_k: float = 333.15                  # 60°C - max operating
     T_critical_k: float = 353.15             # 80°C - thermal runaway risk
@@ -100,9 +103,29 @@ class ThermalModel:
     def T_avg(self) -> float:
         return float(0.7 * self._state[0] + 0.3 * self._state[1])
 
+    @property
+    def dew_point_k(self) -> float:
+        """Approximate dew point using Magnus formula.
+        Condensation occurs when surface temp drops below dew point."""
+        T_amb_c = self.params.T_ambient_k - 273.15
+        rh = max(self.params.humidity_pct, 1.0) / 100.0
+        a, b = 17.27, 237.7
+        alpha = (a * T_amb_c) / (b + T_amb_c) + np.log(rh)
+        dew_c = (b * alpha) / (a - alpha)
+        return dew_c + 273.15
+
+    @property
+    def condensation_active(self) -> bool:
+        """True when surface temperature is at or below dew point."""
+        return self.T_surface <= self.dew_point_k and self.params.humidity_pct > 40
+
     def _convective_heat_loss(self, T_surface: float) -> float:
-        """Newton's law of cooling."""
-        return (self.params.h_conv_w_per_m2_k * self.params.surface_area_m2 *
+        """Newton's law of cooling — humidity increases effective h_conv
+        due to moisture film on surface improving thermal contact."""
+        # Humid air has ~2-6% higher heat transfer coefficient per 50% RH increase
+        rh_factor = 1.0 + 0.08 * (self.params.humidity_pct / 100.0)
+        h_eff = self.params.h_conv_w_per_m2_k * rh_factor
+        return (h_eff * self.params.surface_area_m2 *
                 (T_surface - self.params.T_ambient_k))
 
     def _radiative_heat_loss(self, T_surface: float) -> float:
@@ -187,6 +210,9 @@ class ThermalModel:
             "gradient_c": float(T_core - T_surface),
             "overtemp_warning": T_core > self.params.T_max_k,
             "runaway_risk": T_core > self.params.T_critical_k,
+            "humidity_pct": float(self.params.humidity_pct),
+            "dew_point_c": float(self.dew_point_k - 273.15),
+            "condensation_active": self.condensation_active,
         }
 
     def get_temperature_distribution(self, num_points: int = 20) -> dict:

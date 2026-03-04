@@ -37,6 +37,9 @@ export interface BatteryState {
   thermal_gradient_c: number;
   thermal_overtemp_warning: boolean;
   thermal_runaway_risk: boolean;
+  thermal_humidity_pct: number;
+  thermal_dew_point_c: number;
+  thermal_condensation_active: boolean;
 
   // Degradation
   deg_soh_pct: number;
@@ -45,12 +48,16 @@ export interface BatteryState {
   deg_sei_loss_pct: number;
   deg_cycle_loss_pct: number;
   deg_plating_loss_pct: number;
+  deg_humidity_loss_pct: number;
   deg_total_ah_throughput: number;
   deg_equivalent_cycles: number;
   deg_total_energy_wh: number;
   deg_remaining_cycles: number;
   deg_is_eol: boolean;
   deg_total_time_hours: number;
+
+  // Aging acceleration
+  degradation_time_factor: number;
 
   // Electrochemical (concentration profiles)
   echem_neg_concentration: number[];
