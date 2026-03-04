@@ -51,20 +51,36 @@ def _reset_energy_tracking(engine):
     engine._energy_eff = 0.0
 
 
+def _sanitize_float(v):
+    """Replace NaN / Inf with JSON-safe values."""
+    import math
+    if isinstance(v, float):
+        if math.isnan(v) or math.isinf(v):
+            return None
+    return v
+
+
 def _convert_numpy(obj):
-    """Recursively convert numpy types to native Python types for JSON serialization."""
+    """Recursively convert numpy types to native Python types for JSON serialization.
+    Also sanitises NaN / Inf which produce non-standard JSON tokens that
+    JavaScript's JSON.parse() rejects, silently killing the WS data stream."""
     if isinstance(obj, dict):
         return {k: _convert_numpy(v) for k, v in obj.items()}
     elif isinstance(obj, (list, tuple)):
         return [_convert_numpy(item) for item in obj]
     elif isinstance(obj, np.ndarray):
-        return obj.tolist()
+        # Replace NaN/Inf inside arrays before converting
+        cleaned = np.where(np.isfinite(obj), obj, 0.0)
+        return cleaned.tolist()
     elif isinstance(obj, (np.integer,)):
         return int(obj)
     elif isinstance(obj, (np.floating,)):
-        return float(obj)
+        val = float(obj)
+        return _sanitize_float(val)
     elif isinstance(obj, np.bool_):
         return bool(obj)
+    elif isinstance(obj, float):
+        return _sanitize_float(obj)
     return obj
 
 
@@ -93,12 +109,26 @@ async def broadcast(data: Dict[str, Any]):
         else:
             compact[k] = _convert_numpy(v)
 
+    # Final safety: replace any remaining Python float NaN/Inf
+    # (e.g. from plain dicts that bypassed _convert_numpy)
+    import math
+
+    def _deep_sanitize(o):
+        if isinstance(o, dict):
+            return {k: _deep_sanitize(v) for k, v in o.items()}
+        elif isinstance(o, (list, tuple)):
+            return [_deep_sanitize(i) for i in o]
+        elif isinstance(o, float) and (math.isnan(o) or math.isinf(o)):
+            return None
+        return o
+
+    compact = _deep_sanitize(compact)
     message = json.dumps(compact)
 
     disconnected = set()
     for ws in list(_clients):
         try:
-            await asyncio.wait_for(ws.send_text(message), timeout=2.0)
+            await asyncio.wait_for(ws.send_text(message), timeout=5.0)
         except Exception:
             disconnected.add(ws)
 

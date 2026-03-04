@@ -229,6 +229,26 @@ class SimulationEngine:
                 # Step the cell model
                 step_result = self.cell.step(current, config.dt)
 
+                # ── NaN / Inf guard ──
+                # If any key value went NaN the physics diverged; skip this
+                # frame and reset the cell to avoid poisoning every future frame.
+                _v = step_result.get('voltage', 0)
+                _s = step_result.get('soc', 0)
+                _t = step_result.get('thermal_T_core_c', 25)
+                if (not np.isfinite(_v) or not np.isfinite(_s) or not np.isfinite(_t)):
+                    import traceback
+                    print(f'[ENGINE] NaN/Inf detected at t={self._sim_time:.1f}s '
+                          f'(V={_v}, SOC={_s}, T={_t}). Clamping cell state.')
+                    # Emergency clamp: reset ECM RC voltages, keep SOC
+                    soc_safe = float(np.clip(self.cell.ecm.state[0], 0.05, 0.95))
+                    self.cell.ecm._state = np.array([soc_safe, 0.0, 0.0])
+                    # Clamp thermal to ambient
+                    T_amb = self.cell.thermal.params.T_ambient_k
+                    self.cell.thermal._state = np.array([T_amb, T_amb])
+                    self._sim_time += config.dt
+                    await asyncio.sleep(0.01)
+                    continue
+
                 # ── Charging phase annotation for CC-CV charts ──
                 charging_phase = 'idle'
                 if self._profile is not None:
@@ -331,13 +351,19 @@ class SimulationEngine:
                         await self._on_step_callback(step_result)
 
                 # Control simulation speed — always yield enough for WS pings
+                # Yield more aggressively when a pack is configured because
+                # stepping 16+ cells is CPU-heavy and starves the event loop,
+                # causing WS pings to time out and the connection to drop.
+                has_pack = step_result.get('pack_n_cells', 0) > 1
                 if config.speed_multiplier < 100:
                     target_delay = config.dt / config.speed_multiplier
-                    await asyncio.sleep(max(target_delay * 0.01, 0.005))
+                    min_delay = 0.01 if has_pack else 0.005
+                    await asyncio.sleep(max(target_delay * 0.01, min_delay))
                 else:
-                    # Batch mode: yield control every step
-                    if self.cell.step_count % 50 == 0:
-                        await asyncio.sleep(0.005)
+                    # Batch mode: yield every N steps (fewer for heavy packs)
+                    yield_every = 10 if has_pack else 50
+                    if self.cell.step_count % yield_every == 0:
+                        await asyncio.sleep(0.01 if has_pack else 0.005)
                     else:
                         await asyncio.sleep(0)
 

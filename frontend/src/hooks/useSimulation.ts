@@ -45,7 +45,14 @@ export function useSimulation() {
 
     ws.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
+        // Replace JSON-illegal tokens (NaN, Infinity, -Infinity) that the
+        // Python backend may emit before they reach JSON.parse, which would
+        // throw and silently kill the entire data stream.
+        const raw: string = event.data;
+        const sanitised = raw
+          .replace(/\bNaN\b/g, 'null')
+          .replace(/\b-?Infinity\b/g, 'null');
+        const data = JSON.parse(sanitised);
 
         if (data.type === 'connected') {
           // Server auto-starts, set status to running

@@ -161,6 +161,13 @@ class ThermalModel:
 
         self._state += (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
 
+        # Clamp temperatures to physically plausible range to prevent
+        # NaN / Inf propagation if the model diverges (e.g. at very high
+        # speed multipliers or aggressive degradation acceleration).
+        T_floor = 223.15    # -50 °C
+        T_ceiling = 473.15  # 200 °C  (well above thermal runaway)
+        self._state = np.clip(self._state, T_floor, T_ceiling)
+
         T_core, T_surface = self._state
         Q_conv = self._convective_heat_loss(T_surface)
         Q_rad = self._radiative_heat_loss(T_surface)

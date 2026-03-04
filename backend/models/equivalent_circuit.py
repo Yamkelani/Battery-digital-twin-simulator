@@ -235,6 +235,11 @@ class EquivalentCircuitModel:
         # Clamp SOC
         self._state[0] = np.clip(self._state[0], 0.0, 1.0)
 
+        # Clamp RC pair voltages to prevent runaway divergence that
+        # produces NaN / Inf and poisons every subsequent frame.
+        self._state[1] = np.clip(self._state[1], -2.0, 2.0)
+        self._state[2] = np.clip(self._state[2], -2.0, 2.0)
+
         # Compute outputs
         v_terminal = self.terminal_voltage(self._state, current, T, resistance_factor)
         losses = self.power_loss(self._state, current, T, resistance_factor)
