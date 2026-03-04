@@ -95,12 +95,12 @@ export default function FaultInjectionPanel() {
         onClick={() => setExpanded(!expanded)}
         className="flex items-center gap-2 w-full"
       >
-        <AlertTriangle className="w-3.5 h-3.5 text-orange-400" />
-        <span className="text-[10px] text-panel-muted uppercase tracking-wider font-semibold">
+        <AlertTriangle className="w-4 h-4 text-orange-400" />
+        <span className="text-xs text-panel-muted uppercase tracking-wider font-semibold">
           Fault Injection
         </span>
         {activeFaults.size > 0 && (
-          <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400 font-bold">
+          <span className="ml-auto text-[11px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 font-bold">
             {activeFaults.size} active
           </span>
         )}
@@ -116,9 +116,9 @@ export default function FaultInjectionPanel() {
           >
             {/* Severity slider */}
             <div>
-              <label className="text-[10px] text-panel-muted flex items-center justify-between">
+              <label className="text-xs text-panel-muted flex items-center justify-between">
                 <span>Severity: {(severity * 100).toFixed(0)}%</span>
-                <span className="text-[9px]">
+                <span className="text-[11px]">
                   {severity < 0.3 ? 'Mild' : severity < 0.7 ? 'Moderate' : 'Severe'}
                 </span>
               </label>
@@ -129,7 +129,7 @@ export default function FaultInjectionPanel() {
                 step={0.05}
                 value={severity}
                 onChange={(e) => setSeverity(Number(e.target.value))}
-                className="w-full h-1.5 rounded-lg appearance-none cursor-pointer"
+                className="w-full h-2 rounded-lg appearance-none cursor-pointer"
                 style={{
                   background: `linear-gradient(to right, #22c55e, #eab308, #ef4444)`,
                 }}
@@ -137,7 +137,7 @@ export default function FaultInjectionPanel() {
             </div>
 
             {/* Fault buttons */}
-            <div className="grid grid-cols-2 gap-1.5">
+            <div className="grid grid-cols-2 gap-2">
               {FAULT_TYPES.map((fault) => {
                 const Icon = fault.icon;
                 const isActive = activeFaults.has(fault.id);
@@ -145,19 +145,19 @@ export default function FaultInjectionPanel() {
                   <button
                     key={fault.id}
                     onClick={() => injectFault(fault.id)}
-                    className={`p-2 rounded-lg border text-left transition-all text-[10px]
+                    className={`p-2.5 rounded-lg border text-left transition-all text-xs
                       ${isActive
                         ? 'border-red-500/40 bg-red-500/10 ring-1 ring-red-500/20'
                         : 'border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.06]'
                       }`}
                   >
-                    <Icon className="w-3.5 h-3.5 mb-1" style={{ color: fault.color }} />
+                    <Icon className="w-4 h-4 mb-1.5" style={{ color: fault.color }} />
                     <p className="font-semibold text-white/90">{fault.label}</p>
-                    <p className="text-panel-muted/70 mt-0.5 line-clamp-2" style={{ fontSize: 9 }}>
+                    <p className="text-panel-muted/70 mt-0.5 line-clamp-2" style={{ fontSize: 11 }}>
                       {fault.description}
                     </p>
                     {isActive && (
-                      <span className="inline-block mt-1 text-[8px] px-1 py-0.5 rounded bg-red-500/20 text-red-400">
+                      <span className="inline-block mt-1.5 text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-400">
                         ACTIVE
                       </span>
                     )}
@@ -170,11 +170,11 @@ export default function FaultInjectionPanel() {
             {activeFaults.size > 0 && (
               <button
                 onClick={clearFaults}
-                className="w-full py-1.5 px-3 rounded-lg text-xs font-medium
+                className="w-full py-2 px-4 rounded-lg text-sm font-medium
                            border border-green-500/20 bg-green-500/10 text-green-400
-                           hover:bg-green-500/20 transition-colors flex items-center justify-center gap-1.5"
+                           hover:bg-green-500/20 transition-colors flex items-center justify-center gap-2"
               >
-                <X className="w-3 h-3" />
+                <X className="w-3.5 h-3.5" />
                 Clear All Faults
               </button>
             )}

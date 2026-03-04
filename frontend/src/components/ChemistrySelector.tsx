@@ -68,11 +68,11 @@ export default function ChemistrySelector() {
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <FlaskConical className="w-3.5 h-3.5 text-purple-400" />
-        <span className="text-[10px] text-panel-muted uppercase tracking-wider font-semibold">
+        <FlaskConical className="w-4 h-4 text-purple-400" />
+        <span className="text-xs text-panel-muted uppercase tracking-wider font-semibold">
           Cell Chemistry
         </span>
-        {loading && <RefreshCw className="w-3 h-3 text-blue-400 animate-spin" />}
+        {loading && <RefreshCw className="w-3.5 h-3.5 text-blue-400 animate-spin" />}
       </div>
 
       {/* Selected chemistry display */}
@@ -83,8 +83,8 @@ export default function ChemistrySelector() {
                    transition-colors text-left"
       >
         <div>
-          <p className="text-xs font-semibold text-white">{current?.name ?? 'NMC622/Graphite'}</p>
-          <p className="text-[10px] text-panel-muted mt-0.5">
+          <p className="text-sm font-semibold text-white">{current?.name ?? 'NMC622/Graphite'}</p>
+          <p className="text-xs text-panel-muted mt-0.5">
             {current ? `${current.nominal_voltage}V · ${current.energy_density_wh_kg} Wh/kg · ${current.cycle_life} cycles` : '3.7V · 180 Wh/kg'}
           </p>
         </div>
@@ -105,7 +105,7 @@ export default function ChemistrySelector() {
                 <button
                   key={chem.id}
                   onClick={() => handleSelect(chem.id)}
-                  className={`w-full text-left p-2 rounded-lg border transition-colors text-xs
+                  className={`w-full text-left p-2.5 rounded-lg border transition-colors text-sm
                     ${selected === chem.id
                       ? 'border-blue-500/30 bg-blue-500/10 text-white'
                       : 'border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.06] text-panel-muted hover:text-white'
@@ -113,16 +113,16 @@ export default function ChemistrySelector() {
                 >
                   <div className="flex items-center justify-between">
                     <span className="font-semibold">{chem.name}</span>
-                    <span className="text-[9px] text-panel-muted">{chem.nominal_voltage}V</span>
+                    <span className="text-[11px] text-panel-muted">{chem.nominal_voltage}V</span>
                   </div>
-                  <p className="text-[10px] text-panel-muted/80 mt-0.5">{chem.description}</p>
-                  <div className="flex gap-3 mt-1 text-[9px]">
-                    <span className="flex items-center gap-0.5">
-                      <Zap className="w-2.5 h-2.5" />
+                  <p className="text-xs text-panel-muted/80 mt-0.5">{chem.description}</p>
+                  <div className="flex gap-3 mt-1.5 text-[11px]">
+                    <span className="flex items-center gap-1">
+                      <Zap className="w-3 h-3" />
                       {chem.energy_density_wh_kg} Wh/kg
                     </span>
-                    <span className="flex items-center gap-0.5">
-                      <Battery className="w-2.5 h-2.5" />
+                    <span className="flex items-center gap-1">
+                      <Battery className="w-3 h-3" />
                       {chem.cycle_life} cycles
                     </span>
                   </div>

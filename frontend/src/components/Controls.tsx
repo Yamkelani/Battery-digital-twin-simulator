@@ -119,11 +119,11 @@ export default function Controls() {
   const isActive = !isIdle && status !== 'connecting' && status !== 'error';
 
   return (
-    <div className="p-3 space-y-3 overflow-y-auto max-h-full text-panel-text text-sm">
+    <div className="p-4 space-y-4 overflow-y-auto max-h-full text-panel-text text-sm">
       {/* Status indicator */}
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex items-center gap-2.5 mb-3">
         <div
-          className={`w-2.5 h-2.5 rounded-full ${
+          className={`w-3 h-3 rounded-full ${
             isRunning
               ? 'bg-green-500 animate-pulse'
               : isPaused
@@ -135,17 +135,17 @@ export default function Controls() {
                     : 'bg-gray-500'
           }`}
         />
-        <span className="text-xs uppercase tracking-wider text-panel-muted">
+        <span className="text-sm uppercase tracking-wider text-panel-muted">
           {status}
         </span>
       </div>
 
       {/* ─── Playback Controls ──────────────────────────────────── */}
-      <div className="flex gap-2">
+      <div className="flex gap-2.5">
         {isIdle && (
           <button
             onClick={start}
-            className="flex-1 py-2 px-3 bg-green-600 hover:bg-green-500 rounded-lg font-semibold text-white text-xs transition-colors"
+            className="flex-1 py-2.5 px-4 bg-green-600 hover:bg-green-500 rounded-lg font-semibold text-white text-sm transition-colors"
           >
             ▶ Start
           </button>
@@ -153,7 +153,7 @@ export default function Controls() {
         {isRunning && (
           <button
             onClick={pause}
-            className="flex-1 py-2 px-3 bg-yellow-600 hover:bg-yellow-500 rounded-lg font-semibold text-white text-xs transition-colors"
+            className="flex-1 py-2.5 px-4 bg-yellow-600 hover:bg-yellow-500 rounded-lg font-semibold text-white text-sm transition-colors"
           >
             ⏸ Pause
           </button>
@@ -161,7 +161,7 @@ export default function Controls() {
         {isPaused && (
           <button
             onClick={resume}
-            className="flex-1 py-2 px-3 bg-blue-600 hover:bg-blue-500 rounded-lg font-semibold text-white text-xs transition-colors"
+            className="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-500 rounded-lg font-semibold text-white text-sm transition-colors"
           >
             ▶ Resume
           </button>
@@ -169,14 +169,14 @@ export default function Controls() {
         {isActive && (
           <button
             onClick={stop}
-            className="py-2 px-3 bg-red-600 hover:bg-red-500 rounded-lg font-semibold text-white text-xs transition-colors"
+            className="py-2.5 px-4 bg-red-600 hover:bg-red-500 rounded-lg font-semibold text-white text-sm transition-colors"
           >
             ⏹ Stop
           </button>
         )}
         <button
           onClick={handleReset}
-          className="py-2 px-3 bg-panel-surface hover:bg-panel-border rounded-lg text-xs border border-panel-border transition-colors"
+          className="py-2.5 px-4 bg-panel-surface hover:bg-panel-border rounded-lg text-sm border border-panel-border transition-colors"
         >
           ↺ Reset
         </button>
@@ -184,7 +184,7 @@ export default function Controls() {
 
       {/* ─── Speed Control ──────────────────────────────────────── */}
       <div>
-        <label className="text-[10px] text-panel-muted uppercase tracking-wider">
+        <label className="text-xs text-panel-muted uppercase tracking-wider">
           Simulation Speed: {speed}x
         </label>
         <input
@@ -194,9 +194,9 @@ export default function Controls() {
           step="1"
           value={speed}
           onChange={(e) => handleSpeedChange(Number(e.target.value))}
-          className="w-full h-1.5 mt-1 rounded-lg appearance-none cursor-pointer accent-blue-500 bg-panel-border"
+          className="w-full h-2 mt-1.5 rounded-lg appearance-none cursor-pointer accent-blue-500 bg-panel-border"
         />
-        <div className="flex justify-between text-[9px] text-panel-muted">
+        <div className="flex justify-between text-[11px] text-panel-muted">
           <span>1x</span>
           <span>100x</span>
           <span>200x</span>
@@ -205,13 +205,13 @@ export default function Controls() {
 
       {/* ─── Load Profile ───────────────────────────────────────── */}
       <div>
-        <label className="text-[10px] text-panel-muted uppercase tracking-wider">
+        <label className="text-xs text-panel-muted uppercase tracking-wider">
           Load Profile
         </label>
         <select
           value={activeProfile}
           onChange={(e) => handleProfileChange(e.target.value)}
-          className="w-full mt-1 p-2 bg-panel-surface border border-panel-border rounded-lg text-xs text-panel-text"
+          className="w-full mt-1.5 p-2.5 bg-panel-surface border border-panel-border rounded-lg text-sm text-panel-text"
         >
           <option value="constant_discharge">Constant Discharge</option>
           <option value="constant_charge">Constant Charge</option>
@@ -259,8 +259,8 @@ export default function Controls() {
       )}
 
       {/* ─── Initial Conditions ─────────────────────────────────── */}
-      <div className="border-t border-panel-border pt-2">
-        <h4 className="text-[10px] text-panel-muted uppercase tracking-wider mb-2">
+      <div className="border-t border-panel-border pt-3">
+        <h4 className="text-xs text-panel-muted uppercase tracking-wider mb-2">
           Initial Conditions
         </h4>
 
@@ -293,8 +293,8 @@ export default function Controls() {
       </div>
 
       {/* ─── Model Toggles ──────────────────────────────────────── */}
-      <div className="border-t border-panel-border pt-2">
-        <h4 className="text-[10px] text-panel-muted uppercase tracking-wider mb-2">
+      <div className="border-t border-panel-border pt-3">
+        <h4 className="text-xs text-panel-muted uppercase tracking-wider mb-2">
           Physics Models
         </h4>
 
@@ -315,15 +315,15 @@ export default function Controls() {
 
         <button
           onClick={handleReconfigure}
-          className="w-full mt-2 py-1.5 px-3 bg-panel-surface hover:bg-panel-border rounded-lg text-xs border border-panel-border transition-colors"
+          className="w-full mt-2 py-2 px-4 bg-panel-surface hover:bg-panel-border rounded-lg text-sm border border-panel-border transition-colors"
         >
           Apply Configuration
         </button>
       </div>
 
       {/* ─── Data Export ────────────────────────────────────────── */}
-      <div className="border-t border-panel-border pt-2">
-        <h4 className="text-[10px] text-panel-muted uppercase tracking-wider mb-2">
+      <div className="border-t border-panel-border pt-3">
+        <h4 className="text-xs text-panel-muted uppercase tracking-wider mb-2">
           Data Export
         </h4>
         <ExportButton />
@@ -365,8 +365,8 @@ function SliderControl({
   onChange: (v: number) => void;
 }) {
   return (
-    <div className="mb-2">
-      <label className="text-[10px] text-panel-muted">{label}</label>
+    <div className="mb-3">
+      <label className="text-xs text-panel-muted">{label}</label>
       <input
         type="range"
         min={min}
@@ -374,7 +374,7 @@ function SliderControl({
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full h-1.5 rounded-lg appearance-none cursor-pointer accent-blue-500 bg-panel-border"
+        className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-blue-500 bg-panel-border"
       />
     </div>
   );
@@ -390,17 +390,17 @@ function ToggleSwitch({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between mb-1.5">
-      <span className="text-xs text-panel-muted">{label}</span>
+    <div className="flex items-center justify-between mb-2">
+      <span className="text-sm text-panel-muted">{label}</span>
       <button
         onClick={() => onChange(!value)}
-        className={`w-9 h-5 rounded-full transition-colors relative ${
+        className={`w-11 h-6 rounded-full transition-colors relative ${
           value ? 'bg-blue-600' : 'bg-panel-border'
         }`}
       >
         <div
-          className={`w-3.5 h-3.5 bg-white rounded-full absolute top-0.5 transition-transform ${
-            value ? 'translate-x-4' : 'translate-x-0.5'
+          className={`w-[18px] h-[18px] bg-white rounded-full absolute top-[3px] transition-transform ${
+            value ? 'translate-x-5' : 'translate-x-0.5'
           }`}
         />
       </button>

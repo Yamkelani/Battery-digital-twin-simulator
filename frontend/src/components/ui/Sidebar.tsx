@@ -78,23 +78,23 @@ export default function Sidebar({ onOpenCommandPalette, onOpenSettings }: Sideba
   return (
     <motion.aside
       className="h-full flex flex-col bg-[#0c1222]/90 border-r border-white/[0.06] z-50"
-      animate={{ width: expanded ? 200 : 56 }}
+      animate={{ width: expanded ? 220 : 64 }}
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
     >
       {/* ─── Logo ─── */}
-      <div className="flex items-center justify-center h-14 border-b border-white/[0.06] shrink-0">
+      <div className="flex items-center justify-center h-16 border-b border-white/[0.06] shrink-0">
         <motion.div
-          className="flex items-center gap-2 overflow-hidden"
-          animate={{ width: expanded ? 180 : 32 }}
+          className="flex items-center gap-2.5 overflow-hidden"
+          animate={{ width: expanded ? 200 : 36 }}
         >
-          <Zap className="w-6 h-6 text-blue-400 shrink-0" />
+          <Zap className="w-7 h-7 text-blue-400 shrink-0" />
           <AnimatePresence>
             {expanded && (
               <motion.span
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -10 }}
-                className="text-sm font-bold text-white whitespace-nowrap"
+                className="text-base font-bold text-white whitespace-nowrap"
               >
                 Battery Twin
               </motion.span>
@@ -110,16 +110,16 @@ export default function Sidebar({ onOpenCommandPalette, onOpenSettings }: Sideba
                    text-panel-muted hover:text-white hover:bg-white/[0.06] transition-colors"
         title="Command Palette (Ctrl+K)"
       >
-        <Search className="w-4 h-4 shrink-0" />
+        <Search className="w-5 h-5 shrink-0" />
         <AnimatePresence>
           {expanded && (
             <motion.span
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="text-xs whitespace-nowrap"
+              className="text-sm whitespace-nowrap"
             >
-              Search... <kbd className="ml-1 text-[9px] px-1 py-0.5 rounded bg-white/[0.08]">⌘K</kbd>
+              Search... <kbd className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-white/[0.08]">⌘K</kbd>
             </motion.span>
           )}
         </AnimatePresence>
@@ -135,7 +135,7 @@ export default function Sidebar({ onOpenCommandPalette, onOpenSettings }: Sideba
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  className="text-[9px] uppercase tracking-widest text-panel-muted/60 px-2 pt-3 pb-1"
+                  className="text-[11px] uppercase tracking-widest text-panel-muted/60 px-2 pt-3 pb-1"
                 >
                   {label}
                 </motion.p>
@@ -152,7 +152,7 @@ export default function Sidebar({ onOpenCommandPalette, onOpenSettings }: Sideba
                     onClick={() => handleNavClick(item.id)}
                     title={!expanded ? `${item.label} (${item.shortcut})` : undefined}
                     className={`
-                      w-full flex items-center gap-3 px-2 py-2 rounded-lg text-xs font-medium
+                      w-full flex items-center gap-3 px-2.5 py-2.5 rounded-lg text-sm font-medium
                       transition-all duration-150 relative group
                       ${isActive
                         ? 'bg-blue-500/15 text-blue-400'
@@ -167,7 +167,7 @@ export default function Sidebar({ onOpenCommandPalette, onOpenSettings }: Sideba
                         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                       />
                     )}
-                    <Icon className="w-[18px] h-[18px] shrink-0" />
+                    <Icon className="w-5 h-5 shrink-0" />
                     <AnimatePresence>
                       {expanded && (
                         <motion.span
@@ -181,7 +181,7 @@ export default function Sidebar({ onOpenCommandPalette, onOpenSettings }: Sideba
                       )}
                     </AnimatePresence>
                     {expanded && item.shortcut && (
-                      <span className="ml-auto text-[9px] text-panel-muted/50">{item.shortcut}</span>
+                      <span className="ml-auto text-[11px] text-panel-muted/50">{item.shortcut}</span>
                     )}
                   </button>
                 );
@@ -191,39 +191,39 @@ export default function Sidebar({ onOpenCommandPalette, onOpenSettings }: Sideba
       </nav>
 
       {/* ─── Bottom actions ─── */}
-      <div className="border-t border-white/[0.06] p-2 space-y-1 shrink-0">
+      <div className="border-t border-white/[0.06] p-2.5 space-y-1 shrink-0">
         <button
           onClick={onOpenSettings}
-          className="w-full flex items-center gap-3 px-2 py-2 rounded-lg text-xs text-panel-muted
+          className="w-full flex items-center gap-3 px-2.5 py-2.5 rounded-lg text-sm text-panel-muted
                      hover:text-white hover:bg-white/[0.06] transition-colors"
           title="Settings"
         >
-          <Settings className="w-[18px] h-[18px] shrink-0" />
+          <Settings className="w-5 h-5 shrink-0" />
           {expanded && <span className="whitespace-nowrap">Settings</span>}
         </button>
         <button
           onClick={toggleTheme}
-          className="w-full flex items-center gap-3 px-2 py-2 rounded-lg text-xs text-panel-muted
+          className="w-full flex items-center gap-3 px-2.5 py-2.5 rounded-lg text-sm text-panel-muted
                      hover:text-white hover:bg-white/[0.06] transition-colors"
           title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
         >
           {theme === 'dark' ? (
-            <Sun className="w-[18px] h-[18px] shrink-0" />
+            <Sun className="w-5 h-5 shrink-0" />
           ) : (
-            <Moon className="w-[18px] h-[18px] shrink-0" />
+            <Moon className="w-5 h-5 shrink-0" />
           )}
           {expanded && <span className="whitespace-nowrap">{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>}
         </button>
         <button
           onClick={() => setExpanded(!expanded)}
-          className="w-full flex items-center gap-3 px-2 py-2 rounded-lg text-xs text-panel-muted
+          className="w-full flex items-center gap-3 px-2.5 py-2.5 rounded-lg text-sm text-panel-muted
                      hover:text-white hover:bg-white/[0.06] transition-colors"
           title={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
         >
           {expanded ? (
-            <ChevronLeft className="w-[18px] h-[18px] shrink-0" />
+            <ChevronLeft className="w-5 h-5 shrink-0" />
           ) : (
-            <ChevronRight className="w-[18px] h-[18px] shrink-0" />
+            <ChevronRight className="w-5 h-5 shrink-0" />
           )}
           {expanded && <span className="whitespace-nowrap">Collapse</span>}
         </button>

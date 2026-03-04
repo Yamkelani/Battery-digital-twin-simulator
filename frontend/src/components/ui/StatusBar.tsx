@@ -50,40 +50,40 @@ export default function StatusBar() {
   const simTime = bs?.sim_time_s ?? 0;
 
   return (
-    <div className="h-7 flex items-center gap-4 px-3 bg-[#0a0f1e]/90 border-t border-white/[0.06]
-                    text-[11px] text-panel-muted shrink-0 select-none"
+    <div className="h-9 flex items-center gap-5 px-4 bg-[#0a0f1e]/90 border-t border-white/[0.06]
+                    text-[13px] text-panel-muted shrink-0 select-none"
          style={{ backdropFilter: 'blur(12px)' }}>
       {/* Connection status */}
       <div className="flex items-center gap-1.5">
         {isConnected ? (
-          <Wifi className="w-3 h-3 text-green-400" />
+          <Wifi className="w-4 h-4 text-green-400" />
         ) : (
-          <WifiOff className="w-3 h-3 text-red-400" />
+          <WifiOff className="w-4 h-4 text-red-400" />
         )}
         <span className={isConnected ? 'text-green-400' : 'text-red-400'}>
           {status === 'running' ? 'LIVE' : status.toUpperCase()}
         </span>
       </div>
 
-      <div className="w-px h-3.5 bg-white/[0.08]" />
+      <div className="w-px h-4 bg-white/[0.08]" />
 
       {/* Sim time */}
-      <div className="flex items-center gap-1">
-        <Clock className="w-3 h-3" />
+      <div className="flex items-center gap-1.5">
+        <Clock className="w-4 h-4" />
         <span>{formatTime(simTime)}</span>
       </div>
 
       {/* Speed */}
-      <div className="flex items-center gap-1">
-        <Gauge className="w-3 h-3" />
+      <div className="flex items-center gap-1.5">
+        <Gauge className="w-4 h-4" />
         <span>{speed}x</span>
       </div>
 
-      <div className="w-px h-3.5 bg-white/[0.08]" />
+      <div className="w-px h-4 bg-white/[0.08]" />
 
       {/* Voltage & Current */}
-      <div className="flex items-center gap-1">
-        <Zap className="w-3 h-3" />
+      <div className="flex items-center gap-1.5">
+        <Zap className="w-4 h-4" />
         <span>{voltage.toFixed(2)}V</span>
         <span className="text-panel-muted/50">|</span>
         <span className={current < 0 ? 'text-green-400' : current > 0 ? 'text-orange-400' : ''}>
@@ -92,9 +92,9 @@ export default function StatusBar() {
       </div>
 
       {/* SOC mini-bar */}
-      <div className="flex items-center gap-1.5">
-        <Battery className="w-3 h-3" />
-        <div className="w-16 h-2 rounded-full bg-white/[0.06] overflow-hidden">
+      <div className="flex items-center gap-2">
+        <Battery className="w-4 h-4" />
+        <div className="w-20 h-2.5 rounded-full bg-white/[0.06] overflow-hidden">
           <motion.div
             className="h-full rounded-full"
             style={{ backgroundColor: socColor(soc) }}
@@ -106,8 +106,8 @@ export default function StatusBar() {
       </div>
 
       {/* Temperature */}
-      <div className="flex items-center gap-1">
-        <Thermometer className="w-3 h-3" />
+      <div className="flex items-center gap-1.5">
+        <Thermometer className="w-4 h-4" />
         <span className={tempC > 45 ? 'text-red-400' : tempC > 35 ? 'text-orange-400' : ''}>
           {tempC.toFixed(1)}°C
         </span>
@@ -118,26 +118,26 @@ export default function StatusBar() {
       {/* Pack mini-map */}
       {packConfigured && packCellStates && (
         <div className="flex items-center gap-1.5">
-          <Cpu className="w-3 h-3" />
-          <span className="text-[10px]">{packSeries}s{packParallel}p</span>
+          <Cpu className="w-4 h-4" />
+          <span className="text-xs">{packSeries}s{packParallel}p</span>
           <div className="flex gap-[2px]">
             {packCellStates.slice(0, 16).map((cell: any, i: number) => (
               <div
                 key={i}
-                className="w-1.5 h-3 rounded-[1px]"
+                className="w-2 h-4 rounded-[2px]"
                 style={{ backgroundColor: socColor(cell.soc ?? 0), opacity: 0.8 }}
                 title={`Cell ${i}: SOC ${((cell.soc ?? 0) * 100).toFixed(0)}%`}
               />
             ))}
             {packCellStates.length > 16 && (
-              <span className="text-[9px] text-panel-muted/50 ml-0.5">+{packCellStates.length - 16}</span>
+              <span className="text-[11px] text-panel-muted/50 ml-0.5">+{packCellStates.length - 16}</span>
             )}
           </div>
         </div>
       )}
 
       {/* Keyboard hint */}
-      <span className="text-[9px] text-panel-muted/40">Ctrl+K</span>
+      <span className="text-[11px] text-panel-muted/40">Ctrl+K</span>
     </div>
   );
 }

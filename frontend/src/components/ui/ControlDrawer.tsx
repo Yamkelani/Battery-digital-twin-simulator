@@ -34,22 +34,22 @@ export default function ControlDrawer({ open, onClose }: ControlDrawerProps) {
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-            className="fixed top-0 right-0 h-full w-80 max-w-[85vw] z-50
+            className="fixed top-0 right-0 h-full w-96 max-w-[85vw] z-50
                        bg-[#0f1729]/95 border-l border-white/[0.08] shadow-2xl shadow-black/40
                        flex flex-col"
             style={{ backdropFilter: 'blur(20px)' }}
           >
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-white/[0.06]">
-              <div className="flex items-center gap-2">
-                <SlidersHorizontal className="w-4 h-4 text-blue-400" />
-                <h2 className="text-sm font-semibold text-white">Simulation Controls</h2>
+              <div className="flex items-center gap-2.5">
+                <SlidersHorizontal className="w-5 h-5 text-blue-400" />
+                <h2 className="text-base font-semibold text-white">Simulation Controls</h2>
               </div>
               <button
                 onClick={onClose}
-                className="p-1 rounded-lg hover:bg-white/[0.06] text-panel-muted hover:text-white transition-colors"
+                className="p-1.5 rounded-lg hover:bg-white/[0.06] text-panel-muted hover:text-white transition-colors"
               >
-                <X className="w-4 h-4" />
+                <X className="w-5 h-5" />
               </button>
             </div>
 

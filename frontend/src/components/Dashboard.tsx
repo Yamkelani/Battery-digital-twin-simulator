@@ -175,10 +175,10 @@ export default function Dashboard() {
         {/* ─── Content Area ─── */}
         <main className="flex-1 flex flex-col min-w-0 min-h-0 relative">
           {/* Toolbar */}
-          <div className="h-10 flex items-center justify-between px-4 bg-[#0c1222]/60 border-b border-white/[0.06] shrink-0"
+          <div className="h-12 flex items-center justify-between px-5 bg-[#0c1222]/60 border-b border-white/[0.06] shrink-0"
                style={{ backdropFilter: 'blur(12px)' }}>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-white capitalize">
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-semibold text-white capitalize">
                 {selectedView === 'ml-data' ? 'ML Dataset' :
                  selectedView === 'dqdv' ? 'dQ/dV Analysis' :
                  selectedView === 'cccv' ? 'CC-CV Charging' :
@@ -189,18 +189,18 @@ export default function Dashboard() {
                  selectedView === 'charts' ? 'Time Series' :
                  'Overview'}
               </span>
-              <span className="text-[9px] text-panel-muted/50 border border-white/[0.06] rounded px-1.5 py-0.5">
+              <span className="text-[11px] text-panel-muted/50 border border-white/[0.06] rounded px-2 py-0.5">
                 {selectedView.toUpperCase()}
               </span>
             </div>
 
             <button
               onClick={() => setControlDrawerOpen(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm
                          text-panel-muted hover:text-white hover:bg-white/[0.06]
                          border border-white/[0.06] transition-colors"
             >
-              <SlidersHorizontal className="w-3.5 h-3.5" />
+              <SlidersHorizontal className="w-4 h-4" />
               Controls
             </button>
           </div>

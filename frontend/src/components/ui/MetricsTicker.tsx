@@ -45,16 +45,16 @@ export default function MetricsTicker() {
     <motion.div
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="absolute top-3 left-3 z-10 flex gap-1.5"
+      className="absolute top-4 left-4 z-10 flex gap-2"
     >
       {metrics.map(({ label, value, color }) => (
         <div
           key={label}
-          className="px-2 py-1 rounded-lg border border-white/[0.08]
-                     bg-black/40 text-[11px] font-mono select-none"
+          className="px-3 py-1.5 rounded-lg border border-white/[0.08]
+                     bg-black/40 text-sm font-mono select-none"
           style={{ backdropFilter: 'blur(12px)' }}
         >
-          <span className="text-panel-muted/70 mr-1">{label}</span>
+          <span className="text-panel-muted/70 mr-1.5">{label}</span>
           <span style={{ color }} className="font-semibold">{value}</span>
         </div>
       ))}
