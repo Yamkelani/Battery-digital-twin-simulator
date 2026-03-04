@@ -182,26 +182,35 @@ export function disconnectSimulation() {
 function send(msg: WSAction) {
   if (_ws?.readyState === WebSocket.OPEN) {
     _ws.send(JSON.stringify(msg));
+    console.log('[WS] Sent:', msg.action);
   } else {
-    console.warn('[WS] Not connected, cannot send:', msg);
+    console.warn('[WS] Cannot send (readyState=' + (_ws?.readyState ?? 'null') + '):', msg.action);
+    // Attempt reconnection if not connected
+    if (!_ws || _ws.readyState === WebSocket.CLOSED) {
+      connectSimulation();
+    }
   }
 }
 
 // ─── Public command API ──────────────────────────────────────────────────────
 
 export function simStart() {
+  getStore().setStatus('running');
   send({ action: 'start' });
 }
 
 export function simPause() {
+  getStore().setStatus('paused');
   send({ action: 'pause' });
 }
 
 export function simResume() {
+  getStore().setStatus('running');
   send({ action: 'resume' });
 }
 
 export function simStop() {
+  getStore().setStatus('idle');
   send({ action: 'stop' });
 }
 

@@ -41,6 +41,14 @@ async def _cancel_simulation(engine):
         _simulation_task = None
 
 
+def _on_sim_task_done(task: asyncio.Task):
+    """Clean up the global simulation-task reference when the task ends on its own."""
+    global _simulation_task
+    if _simulation_task is task:
+        _simulation_task = None
+        print("[WS] Simulation task finished (reference cleaned up)")
+
+
 def _reset_energy_tracking(engine):
     """Reset cumulative energy / efficiency counters on the engine."""
     engine._charge_ah_in = 0.0
@@ -201,9 +209,11 @@ async def simulation_websocket(websocket: WebSocket):
             action = data.get("action", "")
 
             if action == "start":
+                print(f"[WS] Start requested (state={engine.state.value})")
                 _user_stopped = False
                 if _simulation_task and not _simulation_task.done():
-                    await websocket.send_json({"type": "error", "message": "Simulation already running"})
+                    # Already running — confirm the actual status back
+                    await websocket.send_json({"type": "status", "status": "running"})
                     continue
 
                 # Clean up any finished task reference
@@ -225,22 +235,41 @@ async def simulation_websocket(websocket: WebSocket):
                 engine.set_callback(broadcast)
 
                 # Start simulation in background task
-                _simulation_task = asyncio.create_task(_run_simulation(engine, websocket))
-                await websocket.send_json({"type": "status", "status": "running"})
+                _simulation_task = asyncio.create_task(_run_simulation(engine))
+                _simulation_task.add_done_callback(_on_sim_task_done)
+                await broadcast({"type": "status", "status": "running"})
+                print("[WS] Simulation started")
 
             elif action == "pause":
-                engine.pause()
-                await websocket.send_json({"type": "status", "status": "paused"})
+                if _simulation_task and not _simulation_task.done() and engine.state.value == "running":
+                    engine.pause()
+                    await broadcast({"type": "status", "status": "paused"})
+                    print("[WS] Paused")
+                else:
+                    # Send the *actual* engine status so the frontend self-corrects
+                    actual = engine.state.value
+                    mapped = "idle" if actual in ("idle", "completed") else actual
+                    await websocket.send_json({"type": "status", "status": mapped})
+                    print(f"[WS] Pause rejected (state={actual})")
 
             elif action == "resume":
-                engine.resume()
-                await websocket.send_json({"type": "status", "status": "running"})
+                if _simulation_task and not _simulation_task.done() and engine.state.value == "paused":
+                    engine.resume()
+                    await broadcast({"type": "status", "status": "running"})
+                    print("[WS] Resumed")
+                else:
+                    actual = engine.state.value
+                    mapped = "idle" if actual in ("idle", "completed") else actual
+                    await websocket.send_json({"type": "status", "status": mapped})
+                    print(f"[WS] Resume rejected (state={actual})")
 
             elif action == "stop":
-                # Fully stop the simulation (cancel the background task)
+                print(f"[WS] Stop requested (state={engine.state.value})")
                 _user_stopped = True
                 await _cancel_simulation(engine)
-                await websocket.send_json({"type": "status", "status": "idle", "message": "Simulation stopped"})
+                engine.state = engine.state.__class__("idle")
+                await broadcast({"type": "status", "status": "idle"})
+                print("[WS] Stopped")
 
             elif action == "reset":
                 _user_stopped = False
@@ -266,13 +295,8 @@ async def simulation_websocket(websocket: WebSocket):
                 except Exception as e:
                     print(f"[WS] Pack/BMS reset error: {e}")
 
-                await websocket.send_json({
-                    "type": "status",
-                    "status": "idle",
-                    "message": "Simulation reset",
-                })
-
-                # Do NOT auto-restart — leave in idle until user clicks Start.
+                await broadcast({"type": "status", "status": "idle"})
+                print("[WS] Reset complete")
 
             elif action == "set_speed":
                 speed = data.get("value", 1.0)
@@ -360,7 +384,7 @@ async def simulation_websocket(websocket: WebSocket):
         _clients.discard(websocket)
 
 
-async def _run_simulation(engine, websocket: WebSocket):
+async def _run_simulation(engine):
     """Background task to run the simulation until the profile completes.
 
     The loop runs the current profile to completion and then stops.
@@ -372,10 +396,11 @@ async def _run_simulation(engine, websocket: WebSocket):
     global _user_stopped
 
     try:
+        print("[WS] Simulation task running...")
         await engine.run_async()
+        print("[WS] Engine run_async completed normally")
     except asyncio.CancelledError:
-        # Graceful stop via user pressing Stop — not an error.
-        pass
+        print("[WS] Simulation task cancelled")
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -394,6 +419,7 @@ async def _run_simulation(engine, websocket: WebSocket):
 
     # Notify all clients that the simulation finished
     final_status = "idle" if _user_stopped else "completed"
+    print(f"[WS] Simulation ended -> broadcasting '{final_status}'")
     try:
         await broadcast({"type": "status", "status": final_status})
     except Exception:
