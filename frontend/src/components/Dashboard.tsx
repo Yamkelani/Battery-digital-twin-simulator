@@ -34,6 +34,7 @@ import CommandPalette from './ui/CommandPalette';
 import StatusBar from './ui/StatusBar';
 import ControlDrawer from './ui/ControlDrawer';
 import MetricsTicker from './ui/MetricsTicker';
+import SimulationAlerts from './ui/SimulationAlerts';
 
 import { useBatteryStore } from '../hooks/useBatteryState';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -217,6 +218,7 @@ export default function Dashboard() {
                           <Scene />
                         </ErrorBoundary>
                         <MetricsTicker />
+                        <SimulationAlerts />
                       </div>
                     </Panel>
                     <ResizeHandle direction="vertical" />
@@ -249,6 +251,7 @@ export default function Dashboard() {
                     <Scene />
                   </ErrorBoundary>
                   <MetricsTicker />
+                  <SimulationAlerts />
                 </motion.div>
               )}
 

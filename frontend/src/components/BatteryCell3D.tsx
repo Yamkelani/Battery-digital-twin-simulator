@@ -83,15 +83,19 @@ export default function BatteryCell3D({ position = [0, 0, 0], cellState, staticP
   const cellD = 0.027 * SCALE; // depth
 
   // Derived state — cellState override takes priority over global store
-  const soc = cellState?.soc ?? batteryState?.soc ?? 0.5;
-  const tempC = cellState?.tempC ?? batteryState?.thermal_T_core_c ?? 25;
-  const soh = cellState?.soh ?? batteryState?.deg_soh_pct ?? 100;
-  const seiLoss = cellState?.seiLoss ?? batteryState?.deg_sei_loss_pct ?? 0;
-  const platingLoss = cellState?.platingLoss ?? batteryState?.deg_plating_loss_pct ?? 0;
-  const current = cellState?.current ?? batteryState?.current ?? 0;
-  const resistanceFactor = cellState?.resistanceFactor ?? batteryState?.deg_resistance_factor ?? 1.0;
-  const cycleLoss = cellState?.cycleLoss ?? batteryState?.deg_cycle_loss_pct ?? 0;
-  const heatGenW = cellState?.heatGenW ?? batteryState?.heat_total_w ?? 0;
+  // Use safe() to guard against NaN/Infinity from simulation edge cases
+  const _safe = (v: number | undefined | null, fb: number) =>
+    v != null && Number.isFinite(v) ? v : fb;
+
+  const soc = _safe(cellState?.soc ?? batteryState?.soc, 0.5);
+  const tempC = _safe(cellState?.tempC ?? batteryState?.thermal_T_core_c, 25);
+  const soh = _safe(cellState?.soh ?? batteryState?.deg_soh_pct, 100);
+  const seiLoss = _safe(cellState?.seiLoss ?? batteryState?.deg_sei_loss_pct, 0);
+  const platingLoss = _safe(cellState?.platingLoss ?? batteryState?.deg_plating_loss_pct, 0);
+  const current = _safe(cellState?.current ?? batteryState?.current, 0);
+  const resistanceFactor = _safe(cellState?.resistanceFactor ?? batteryState?.deg_resistance_factor, 1.0);
+  const cycleLoss = _safe(cellState?.cycleLoss ?? batteryState?.deg_cycle_loss_pct, 0);
+  const heatGenW = _safe(cellState?.heatGenW ?? batteryState?.heat_total_w, 0);
   const isCharging = current < 0;
   const isDischarging = current > 0;
 

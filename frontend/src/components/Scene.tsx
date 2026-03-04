@@ -85,17 +85,18 @@ function FocusedCellView({ cellId }: { cellId: string }) {
       if (json.status !== 'ok') return;
       const cell = json.cells?.find((c: any) => c.cell_id === cellId);
       if (cell) {
+        const _s = (v: any, fb: number) => (v != null && Number.isFinite(v) ? v : fb);
         setCellState({
-          soc: cell.soc,
-          tempC: cell.temp_c,
-          tempSurfaceC: cell.temp_surface_c,
-          soh: cell.soh_pct,
-          seiLoss: cell.sei_loss_pct ?? 0,
-          platingLoss: cell.plating_loss_pct ?? 0,
-          current: cell.current ?? 0,
-          resistanceFactor: cell.resistance_factor ?? 1.0,
-          cycleLoss: cell.cycle_loss_pct ?? 0,
-          heatGenW: cell.heat_w ?? 0,
+          soc: _s(cell.soc, 0.5),
+          tempC: _s(cell.temp_c, 25),
+          tempSurfaceC: _s(cell.temp_surface_c, 25),
+          soh: _s(cell.soh_pct, 100),
+          seiLoss: _s(cell.sei_loss_pct, 0),
+          platingLoss: _s(cell.plating_loss_pct, 0),
+          current: _s(cell.current, 0),
+          resistanceFactor: _s(cell.resistance_factor, 1.0),
+          cycleLoss: _s(cell.cycle_loss_pct, 0),
+          heatGenW: _s(cell.heat_w, 0),
         });
       }
     } catch {

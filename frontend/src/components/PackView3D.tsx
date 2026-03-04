@@ -98,6 +98,12 @@ const _tmpColor2 = new THREE.Color();
  * All animation is imperative (useFrame) — zero React re-renders.
  * All THREE.Color work reuses module-level objects — zero per-frame allocations.
  */
+/** Safely coerce a number — returns fallback when value is NaN, Infinity, or nullish */
+function safe(v: number | undefined | null, fallback: number): number {
+  if (v == null || !Number.isFinite(v)) return fallback;
+  return v;
+}
+
 function PackCellSimple({ cellState }: { cellState: CellStateOverride }) {
   const groupRef = useRef<THREE.Group>(null!);
   const shellRef = useRef<THREE.MeshStandardMaterial>(null!);
@@ -111,19 +117,28 @@ function PackCellSimple({ cellState }: { cellState: CellStateOverride }) {
   const termPosRef = useRef<THREE.Mesh>(null!);
   const termNegRef = useRef<THREE.Mesh>(null!);
 
-  const opacity = Math.max(0.5, cellState.soh / 100) * 0.85;
+  // Guard against NaN/undefined — prevents cells from going invisible
+  const soh = safe(cellState.soh, 100);
+  const opacity = Math.max(0.6, soh / 100) * 0.85;
 
   // Animate every frame — imperative updates, zero re-renders, zero allocations
   useFrame(() => {
     const t = Date.now() * 0.001;
-    const activity = Math.min(Math.abs(cellState.current) / 20, 1);
+    const _soc = safe(cellState.soc, 0.5);
+    const _tempC = safe(cellState.tempC, 25);
+    const _current = safe(cellState.current, 0);
+    const _seiLoss = safe(cellState.seiLoss, 0);
+    const _platingLoss = safe(cellState.platingLoss, 0);
+    const _cycleLoss = safe(cellState.cycleLoss, 0);
+    const _resFactor = safe(cellState.resistanceFactor, 1);
+    const activity = Math.min(Math.abs(_current) / 20, 1);
 
     // ── Visual amplification: same non-linear mapping as single-cell view ──
-    const seiVisual = Math.min(Math.pow(Math.max(cellState.seiLoss / 3, 0), 0.55), 1.0);
-    const platingVisual = Math.min(Math.pow(Math.max(cellState.platingLoss / 0.5, 0), 0.5), 1.0);
-    const cycleVisual = Math.min(Math.pow(Math.max((cellState.cycleLoss ?? 0) / 2, 0), 0.5), 1.0);
+    const seiVisual = Math.min(Math.pow(Math.max(_seiLoss / 3, 0), 0.55), 1.0);
+    const platingVisual = Math.min(Math.pow(Math.max(_platingLoss / 0.5, 0), 0.5), 1.0);
+    const cycleVisual = Math.min(Math.pow(Math.max(_cycleLoss / 2, 0), 0.5), 1.0);
     const degradationTotal = Math.min(seiVisual * 0.5 + platingVisual * 0.3 + cycleVisual * 0.2, 1.0);
-    const resistVisual = Math.min(((cellState.resistanceFactor ?? 1) - 1) * 3, 1.0);
+    const resistVisual = Math.min((_resFactor - 1) * 3, 1.0);
 
     // ── Breathing + gas swelling ──
     if (groupRef.current) {
@@ -134,9 +149,9 @@ function PackCellSimple({ cellState }: { cellState: CellStateOverride }) {
 
     // ── Shell color: SOC-based green→yellow→red, subtly darkened by degradation ──
     if (shellRef.current) {
-      _tmpColor1.set(socToColor(cellState.soc));
+      _tmpColor1.set(socToColor(_soc));
       // Slight temperature tint (warm shift when hot)
-      const tempInfluence = Math.max(0, (cellState.tempC - 30) / 40) * 0.15;
+      const tempInfluence = Math.max(0, (_tempC - 30) / 40) * 0.15;
       if (tempInfluence > 0.01) {
         _tmpColor2.set('#ff6644');
         _tmpColor1.lerp(_tmpColor2, tempInfluence);
@@ -151,20 +166,20 @@ function PackCellSimple({ cellState }: { cellState: CellStateOverride }) {
 
     // ── SOC fill bar — capacity-adjusted: degraded cells hold less charge ──
     if (fillRef.current && fillMatRef.current) {
-      const effectiveCap = cellState.soh / 100;
-      const fillH = Math.max(cellState.soc * effectiveCap * CELL_H * 0.85, 0.01);
+      const effectiveCap = soh / 100;
+      const fillH = Math.max(_soc * effectiveCap * CELL_H * 0.85, 0.01);
       fillRef.current.scale.y = fillH / CELL_H;
       fillRef.current.position.y = -CELL_H / 2 + fillH / 2 + CELL_H * 0.05;
       fillMatRef.current.opacity = 0.3 + activity * 0.15;
       // Update fill color to match SOC
-      _tmpColor1.set(socToColor(cellState.soc));
+      _tmpColor1.set(socToColor(_soc));
       fillMatRef.current.color.copy(_tmpColor1);
       fillMatRef.current.emissive.copy(_tmpColor1);
     }
 
     // ── Heat overlay — faint outline glow, only visible when temp > 30°C ──
     if (heatRef.current) {
-      const heatNorm = Math.max(0, (cellState.tempC - 30) / 30); // starts at 30°C
+      const heatNorm = Math.max(0, (_tempC - 30) / 30); // starts at 30°C
       heatRef.current.opacity = heatNorm * 0.25;  // subtle, max 0.25
       const hue = Math.max(0, 0.15 - heatNorm * 0.15);
       heatRef.current.color.setHSL(hue, 0.9, 0.5);
@@ -675,6 +690,7 @@ function CellLabel({ position, label }: { position: [number, number, number]; la
 export default function PackView3D() {
   const groupRef = useRef<THREE.Group>(null!);
   const [packData, setPackData] = useState<PackData | null>(null);
+  const lastGoodPackRef = useRef<PackData | null>(null);
   const setFocusedCellId = useBatteryStore((s) => s.setFocusedCellId);
 
   // Real-time WS pack data from the store (updated every sim step)
@@ -747,7 +763,17 @@ export default function PackView3D() {
     return map;
   }, [effectivePackData, layout]);
 
-  if (!effectivePackData || effectivePackData.cells.length === 0) return null;
+  // Keep a reference to the last valid pack data so cells don't vanish
+  // during brief WS gaps or data transitions.
+  const renderData = useMemo(() => {
+    if (effectivePackData && effectivePackData.cells.length > 0) {
+      lastGoodPackRef.current = effectivePackData;
+      return effectivePackData;
+    }
+    return lastGoodPackRef.current;
+  }, [effectivePackData]);
+
+  if (!renderData || renderData.cells.length === 0) return null;
 
   const halfW = ((layout.cols - 1) * SPACING_X) / 2;
   const halfZ = ((layout.rows - 1) * SPACING_Z) / 2;
@@ -755,25 +781,25 @@ export default function PackView3D() {
   return (
     <group ref={groupRef} position={[0, 0.5, 0]}>
       {/* ── Individual cells ──────────────────────────────────── */}
-      {effectivePackData.cells.slice(0, MAX_PACK_CELLS).map((cell, idx) => {
+      {renderData.cells.slice(0, MAX_PACK_CELLS).map((cell, idx) => {
         const col = idx % layout.cols;
         const row = Math.floor(idx / layout.cols);
         const x = col * SPACING_X - halfW;
         const z = row * SPACING_Z - halfZ;
 
         const cellState: CellStateOverride = {
-          soc: cell.soc,
-          tempC: cell.temp_c,
-          tempSurfaceC: cell.temp_surface_c ?? cell.temp_c,
-          soh: cell.soh_pct,
-          seiLoss: cell.sei_loss_pct,
-          platingLoss: cell.plating_loss_pct ?? 0,
-          current: cell.current,
+          soc: safe(cell.soc, 0.5),
+          tempC: safe(cell.temp_c, 25),
+          tempSurfaceC: safe(cell.temp_surface_c ?? cell.temp_c, 25),
+          soh: safe(cell.soh_pct, 100),
+          seiLoss: safe(cell.sei_loss_pct, 0),
+          platingLoss: safe(cell.plating_loss_pct ?? 0, 0),
+          current: safe(cell.current, 0),
           isEdge: cell.is_edge_cell ?? false,
-          heatW: cell.heat_w ?? 0,
-          resistanceFactor: cell.resistance_factor ?? 1.0,
-          cycleLoss: cell.cycle_loss_pct ?? 0,
-          heatGenW: cell.heat_w ?? 0,
+          heatW: safe(cell.heat_w ?? 0, 0),
+          resistanceFactor: safe(cell.resistance_factor ?? 1.0, 1.0),
+          cycleLoss: safe(cell.cycle_loss_pct ?? 0, 0),
+          heatGenW: safe(cell.heat_w ?? 0, 0),
         };
 
         return (
@@ -798,7 +824,7 @@ export default function PackView3D() {
             </group>
 
             {/* Label — skip for large packs to save GPU textures */}
-            {effectivePackData.cells.length <= 24 && (
+            {renderData.cells.length <= 24 && (
               <CellLabel position={[x, 0.75, z]} label={cell.cell_id.replace('CELL_', 'C')} />
             )}
           </group>
@@ -806,17 +832,17 @@ export default function PackView3D() {
       })}
 
       {/* ── Inter-cell thermal links (skip for large packs) ──── */}
-      {effectivePackData.thermal_links && effectivePackData.thermal_links.length > 0 && effectivePackData.n_cells <= 32 && (
-        <HeatFlowLines links={effectivePackData.thermal_links} cellPositions={cellPositions} />
+      {renderData.thermal_links && renderData.thermal_links.length > 0 && renderData.n_cells <= 32 && (
+        <HeatFlowLines links={renderData.thermal_links} cellPositions={cellPositions} />
       )}
 
       {/* ── Current flow arrows (skip for large packs) ─────── */}
-      {effectivePackData.n_cells <= 32 && (
+      {renderData.n_cells <= 32 && (
         <CurrentFlowArrows
-          cells={effectivePackData.cells}
+          cells={renderData.cells}
           cellPositions={cellPositions}
-          nSeries={effectivePackData.n_series ?? 1}
-          nParallel={effectivePackData.n_parallel ?? 1}
+          nSeries={renderData.n_series ?? 1}
+          nParallel={renderData.n_parallel ?? 1}
         />
       )}
     </group>

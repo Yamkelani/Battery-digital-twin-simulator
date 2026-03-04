@@ -18,6 +18,13 @@ from models.battery_cell import BatteryCell, BatteryCellConfig
 from models.thermal import ThermalParameters
 
 
+def _sanitize(val: float, fallback: float = 0.0) -> float:
+    """Replace NaN/Inf with a safe fallback value."""
+    if not np.isfinite(val):
+        return fallback
+    return float(val)
+
+
 @dataclass
 class PackConfig:
     """Configuration for a battery pack."""
@@ -346,23 +353,23 @@ class BatteryPack:
 
             summaries.append({
                 "cell_id": cell.config.cell_id,
-                "soc": cell.ecm.soc,
-                "voltage": cell.ecm.terminal_voltage(
+                "soc": _sanitize(cell.ecm.soc, 0.5),
+                "voltage": _sanitize(cell.ecm.terminal_voltage(
                     cell.ecm.state, 0, cell.thermal.T_core
-                ),
-                "temp_c": cell.thermal.T_core - 273.15,
-                "temp_surface_c": cell.thermal.T_surface - 273.15,
-                "temp_gradient_c": (cell.thermal.T_core - cell.thermal.T_surface),
-                "soh_pct": soh,
-                "sei_loss_pct": sei_loss,
-                "plating_loss_pct": plating_loss,
-                "cycle_loss_pct": cycle_loss,
-                "resistance_factor": (
+                ), 3.7),
+                "temp_c": _sanitize(cell.thermal.T_core - 273.15, 25.0),
+                "temp_surface_c": _sanitize(cell.thermal.T_surface - 273.15, 25.0),
+                "temp_gradient_c": _sanitize(cell.thermal.T_core - cell.thermal.T_surface, 0.0),
+                "soh_pct": _sanitize(soh, 100.0),
+                "sei_loss_pct": _sanitize(sei_loss, 0.0),
+                "plating_loss_pct": _sanitize(plating_loss, 0.0),
+                "cycle_loss_pct": _sanitize(cycle_loss, 0.0),
+                "resistance_factor": _sanitize(
                     deg.resistance_factor
-                    if cell.config.enable_degradation else 1.0
+                    if cell.config.enable_degradation else 1.0, 1.0
                 ),
-                "current": current,
-                "heat_w": heat_w,
+                "current": _sanitize(current, 0.0),
+                "heat_w": _sanitize(heat_w, 0.0),
                 "capacity_ah": cell.config.nominal_capacity_ah,
                 "is_edge_cell": is_edge,
                 "h_conv_effective": cell.thermal.params.h_conv_w_per_m2_k,
@@ -402,12 +409,12 @@ class BatteryPack:
                 links.append({
                     "from": id_a,
                     "to": id_b,
-                    "heat_flow_w": float(Q),
-                    "temp_diff_c": float(T_surf_a - T_surf_b),
-                    "from_temp_c": float(T_core_a),
-                    "to_temp_c": float(T_core_b),
-                    "from_surface_c": float(T_surf_a),
-                    "to_surface_c": float(T_surf_b),
+                    "heat_flow_w": _sanitize(Q, 0.0),
+                    "temp_diff_c": _sanitize(T_surf_a - T_surf_b, 0.0),
+                    "from_temp_c": _sanitize(T_core_a, 25.0),
+                    "to_temp_c": _sanitize(T_core_b, 25.0),
+                    "from_surface_c": _sanitize(T_surf_a, 25.0),
+                    "to_surface_c": _sanitize(T_surf_b, 25.0),
                     "coupling_type": "series",
                 })
 
@@ -434,12 +441,12 @@ class BatteryPack:
                         links.append({
                             "from": id_a,
                             "to": id_b,
-                            "heat_flow_w": float(Q),
-                            "temp_diff_c": float(T_surf_a - T_surf_b),
-                            "from_temp_c": float(T_core_a),
-                            "to_temp_c": float(T_core_b),
-                            "from_surface_c": float(T_surf_a),
-                            "to_surface_c": float(T_surf_b),
+                            "heat_flow_w": _sanitize(Q, 0.0),
+                            "temp_diff_c": _sanitize(T_surf_a - T_surf_b, 0.0),
+                            "from_temp_c": _sanitize(T_core_a, 25.0),
+                            "to_temp_c": _sanitize(T_core_b, 25.0),
+                            "from_surface_c": _sanitize(T_surf_a, 25.0),
+                            "to_surface_c": _sanitize(T_surf_b, 25.0),
                             "coupling_type": "parallel",
                         })
 

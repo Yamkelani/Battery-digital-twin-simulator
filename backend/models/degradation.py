@@ -50,40 +50,40 @@ class DegradationParameters:
 
     # === SEI Growth (Calendar Aging) ===
     # Capacity loss coefficient [fraction / sqrt(s)]
-    # Tuned for demo: ~2% SEI loss after 5 min wall time (with 500x time factor)
-    # preserving correct qualitative behavior (Arrhenius T-dependence, sqrt(t) law).
-    k_sei: float = 6.5e-5
-    # Activation energy for SEI growth [J/mol] — lowered for faster demo
-    Ea_sei: float = 20000.0
+    # Tuned so degradation is visible over ~10-15 min of wall-clock simulation
+    # without prematurely hitting EOL. sqrt(t) law preserved.
+    k_sei: float = 2.0e-5
+    # Activation energy for SEI growth [J/mol]
+    Ea_sei: float = 24000.0
     # SEI resistance growth coefficient [Ohm / sqrt(s)]
-    k_sei_resistance: float = 1.0e-4
+    k_sei_resistance: float = 4.0e-5
 
     # === Cycle Aging ===
     # Capacity loss coefficient per Ah throughput [fraction / Ah^z]
-    # Tuned for demo: ~1% cycle loss after 5 min wall time (with 500x time factor)
-    k_cyc: float = 2.5e-4
+    # Tuned for a gentler curve — ~2-3% cycle loss over extended sessions
+    k_cyc: float = 8.0e-5
     # Activation energy for cycle aging [J/mol]
-    Ea_cyc: float = 18000.0
+    Ea_cyc: float = 22000.0
     # Power law exponent for Ah throughput
     z_cyc: float = 0.55
     # Cycle aging resistance coefficient
-    k_cyc_resistance: float = 8.0e-5
+    k_cyc_resistance: float = 3.0e-5
     # DOD stress factor coefficient
-    k_dod: float = 1.5  # Higher DOD → faster degradation
+    k_dod: float = 1.2  # Higher DOD → faster degradation
 
     # === Lithium Plating ===
     # Critical C-rate threshold for plating onset at T_ref
-    c_rate_plating_threshold: float = 0.3
+    c_rate_plating_threshold: float = 0.5
     # Temperature below which plating risk increases [K]
-    T_plating_onset: float = 303.15  # 30°C — visible at room temperature for demo
+    T_plating_onset: float = 288.15  # 15°C — only at genuinely cold temps
     # Plating capacity loss rate [fraction / (Ah * K)]
-    k_plating: float = 5.0e-6
+    k_plating: float = 2.0e-6
 
     # === General Limits ===
     # End of life capacity retention threshold
-    eol_capacity_fraction: float = 0.80  # 80% = end of life
+    eol_capacity_fraction: float = 0.70  # 70% = end of life (more lenient)
     # Maximum resistance increase factor
-    max_resistance_factor: float = 2.0
+    max_resistance_factor: float = 2.5
 
 
 class DegradationModel:
