@@ -28,6 +28,11 @@ import DQDVChart from './DQDVChart';
 import CCCVChart from './CCCVChart';
 import RULPanel from './RULPanel';
 import MLExportPanel from './MLExportPanel';
+import ThermalManagementView from './ThermalManagementView';
+import CycleAgingComparison from './CycleAgingComparison';
+import SafetyAbusePanel from './SafetyAbusePanel';
+import PackSOCHistogram from './PackSOCHistogram';
+import ParameterSweepPanel from './ParameterSweepPanel';
 
 import Sidebar from './ui/Sidebar';
 import CommandPalette from './ui/CommandPalette';
@@ -307,6 +312,46 @@ export default function Dashboard() {
                 <motion.div key="ml-data" className="absolute inset-0 overflow-hidden" {...viewTransition}>
                   <ErrorBoundary label="ML Data">
                     <MLExportPanel />
+                  </ErrorBoundary>
+                </motion.div>
+              )}
+
+              {selectedView === 'thermal' && (
+                <motion.div key="thermal" className="absolute inset-0 overflow-hidden" {...viewTransition}>
+                  <ErrorBoundary label="Thermal">
+                    <ThermalManagementView />
+                  </ErrorBoundary>
+                </motion.div>
+              )}
+
+              {selectedView === 'aging' && (
+                <motion.div key="aging" className="absolute inset-0 overflow-hidden" {...viewTransition}>
+                  <ErrorBoundary label="Cycle Aging">
+                    <CycleAgingComparison />
+                  </ErrorBoundary>
+                </motion.div>
+              )}
+
+              {selectedView === 'safety' && (
+                <motion.div key="safety" className="absolute inset-0 overflow-hidden" {...viewTransition}>
+                  <ErrorBoundary label="Safety Abuse">
+                    <SafetyAbusePanel />
+                  </ErrorBoundary>
+                </motion.div>
+              )}
+
+              {selectedView === 'balancing' && (
+                <motion.div key="balancing" className="absolute inset-0 overflow-hidden" {...viewTransition}>
+                  <ErrorBoundary label="SOC & Balance">
+                    <PackSOCHistogram />
+                  </ErrorBoundary>
+                </motion.div>
+              )}
+
+              {selectedView === 'sweep' && (
+                <motion.div key="sweep" className="absolute inset-0 overflow-hidden" {...viewTransition}>
+                  <ErrorBoundary label="Parameter Sweep">
+                    <ParameterSweepPanel />
                   </ErrorBoundary>
                 </motion.div>
               )}

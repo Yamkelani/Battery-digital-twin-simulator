@@ -24,12 +24,17 @@ import {
   ChevronRight,
   Zap,
   Search,
+  Flame,
+  FlaskConical,
+  Shield,
+  BarChart2,
+  SlidersHorizontal,
   type LucideIcon,
 } from 'lucide-react';
 import { useBatteryStore } from '../../hooks/useBatteryState';
 import { useTheme } from '../../context/ThemeContext';
 
-type ViewId = '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv' | 'bms' | 'cccv' | 'rul' | 'ml-data';
+type ViewId = '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv' | 'bms' | 'cccv' | 'rul' | 'ml-data' | 'thermal' | 'aging' | 'safety' | 'balancing' | 'sweep';
 
 interface NavItem {
   id: ViewId;
@@ -47,6 +52,11 @@ const navItems: NavItem[] = [
   { id: 'nyquist', label: 'Nyquist (EIS)', icon: CircleDot,      shortcut: '5', group: 'analysis' },
   { id: 'dqdv',    label: 'dQ/dV Analysis', icon: Activity,      shortcut: '6', group: 'analysis' },
   { id: 'cccv',    label: 'CC-CV Charge',  icon: BatteryCharging, shortcut: '7', group: 'analysis' },
+  { id: 'thermal', label: 'Thermal Mgmt',   icon: Flame,           shortcut: undefined, group: 'analysis' },
+  { id: 'safety',  label: 'Abuse Testing',  icon: Shield,          shortcut: undefined, group: 'analysis' },
+  { id: 'balancing', label: 'SOC & Balance', icon: BarChart2,      shortcut: undefined, group: 'analysis' },
+  { id: 'aging',   label: 'Cycle Aging',    icon: FlaskConical,    shortcut: undefined, group: 'data' },
+  { id: 'sweep',   label: 'Param Sweep',    icon: SlidersHorizontal, shortcut: undefined, group: 'data' },
   { id: 'rul',     label: 'RUL Prediction', icon: TrendingUp,    shortcut: '8', group: 'data' },
   { id: 'ml-data', label: 'ML Dataset',    icon: Database,       shortcut: '9', group: 'data' },
 ];
