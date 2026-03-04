@@ -88,6 +88,7 @@ function startBackend() {
         '-m', 'uvicorn', 'main:app',
         '--host', BACKEND_HOST,
         '--port', String(BACKEND_PORT),
+        '--ws', 'wsproto',
         '--ws-ping-interval', '30',
         '--ws-ping-timeout', '30',
       ],
