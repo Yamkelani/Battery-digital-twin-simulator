@@ -29,7 +29,13 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useBatteryStore } from '../../hooks/useBatteryState';
-import { useSimulation } from '../../hooks/useSimulation';
+import {
+  simStart,
+  simPause,
+  simResume,
+  simStop,
+  simReset,
+} from '../../services/simulationSocket';
 import { useTheme } from '../../context/ThemeContext';
 
 type ViewId = '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv' | 'bms' | 'cccv' | 'rul' | 'ml-data';
@@ -51,7 +57,7 @@ interface CommandPaletteProps {
 export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const [search, setSearch] = useState('');
   const setSelectedView = useBatteryStore((s) => s.setSelectedView);
-  const { status, start, pause, resume, stop, reset } = useSimulation();
+  const status = useBatteryStore((s) => s.status);
   const { theme, toggleTheme } = useTheme();
 
   // Build command list
@@ -69,16 +75,16 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
 
     // Simulation control
     ...(status === 'idle' || status === 'completed'
-      ? [{ id: 'sim-start',    label: 'Start Simulation',    icon: Play,          group: 'Simulation', action: start,  shortcut: 'Space' }]
+      ? [{ id: 'sim-start',    label: 'Start Simulation',    icon: Play,          group: 'Simulation', action: simStart,  shortcut: 'Space' }]
       : []),
     ...(status === 'running'
-      ? [{ id: 'sim-pause',    label: 'Pause Simulation',    icon: Pause,         group: 'Simulation', action: pause,  shortcut: 'Space' }]
+      ? [{ id: 'sim-pause',    label: 'Pause Simulation',    icon: Pause,         group: 'Simulation', action: simPause,  shortcut: 'Space' }]
       : []),
     ...(status === 'paused'
-      ? [{ id: 'sim-resume',   label: 'Resume Simulation',   icon: Play,          group: 'Simulation', action: resume, shortcut: 'Space' }]
+      ? [{ id: 'sim-resume',   label: 'Resume Simulation',   icon: Play,          group: 'Simulation', action: simResume, shortcut: 'Space' }]
       : []),
-    { id: 'sim-stop',     label: 'Stop Simulation',      icon: Square,        group: 'Simulation', action: stop,   shortcut: 'Esc' },
-    { id: 'sim-reset',    label: 'Reset Simulation',     icon: RotateCcw,     group: 'Simulation', action: () => reset(0.8, 25, true), shortcut: 'R' },
+    { id: 'sim-stop',     label: 'Stop Simulation',      icon: Square,        group: 'Simulation', action: simStop,   shortcut: 'Esc' },
+    { id: 'sim-reset',    label: 'Reset Simulation',     icon: RotateCcw,     group: 'Simulation', action: () => simReset(0.8, 25, true), shortcut: 'R' },
 
     // Settings
     { id: 'toggle-theme',  label: `Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`, icon: theme === 'dark' ? Sun : Moon, group: 'Settings', action: toggleTheme },

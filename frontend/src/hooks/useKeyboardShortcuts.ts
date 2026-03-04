@@ -7,15 +7,22 @@
  *   +/=    → speed up
  *   -      → slow down
  *   Escape → stop
+ *
+ * Uses singleton commands from simulationSocket — no extra WS connections.
  */
 
 import { useEffect, useCallback } from 'react';
 import { useBatteryStore } from './useBatteryState';
-import { useSimulation } from './useSimulation';
+import {
+  simPause,
+  simResume,
+  simStop,
+  simReset,
+  simSetSpeed,
+} from '../services/simulationSocket';
 
 export function useKeyboardShortcuts() {
-  const { status } = useBatteryStore();
-  const { pause, resume, stop, reset, setSimSpeed } = useSimulation();
+  const status = useBatteryStore((s) => s.status);
   const speed = useBatteryStore((s) => s.speed);
   const setSpeed = useBatteryStore((s) => s.setSpeed);
 
@@ -28,39 +35,39 @@ export function useKeyboardShortcuts() {
       switch (e.key) {
         case ' ':
           e.preventDefault();
-          if (status === 'running') pause();
-          else if (status === 'paused') resume();
+          if (status === 'running') simPause();
+          else if (status === 'paused') simResume();
           break;
 
         case 'r':
         case 'R':
-          reset(0.8, 25, true);
+          simReset(0.8, 25, true);
           break;
 
         case '+':
         case '=': {
           const newSpeed = Math.min(speed + 10, 200);
           setSpeed(newSpeed);
-          setSimSpeed(newSpeed);
+          simSetSpeed(newSpeed);
           break;
         }
 
         case '-': {
           const newSpeed = Math.max(speed - 10, 1);
           setSpeed(newSpeed);
-          setSimSpeed(newSpeed);
+          simSetSpeed(newSpeed);
           break;
         }
 
         case 'Escape':
-          stop();
+          simStop();
           break;
 
         default:
           break;
       }
     },
-    [status, pause, resume, stop, reset, speed, setSpeed, setSimSpeed],
+    [status, speed, setSpeed],
   );
 
   useEffect(() => {
