@@ -11,11 +11,14 @@ Manages multiple battery cells in series/parallel configuration with:
 from __future__ import annotations
 
 import numpy as np
+import logging
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
 
 from models.battery_cell import BatteryCell, BatteryCellConfig
 from models.thermal import ThermalParameters
+
+logger = logging.getLogger("battery_dt.pack")
 
 
 def _sanitize(val: float, fallback: float = 0.0) -> float:
@@ -134,6 +137,24 @@ class BatteryPack:
         cell_states: List[Dict[str, Any]] = []
         for cell in self.cells:
             result = cell.step(string_current, dt)
+
+            # Per-cell NaN/Inf recovery: if any key value diverged, clamp
+            # to safe state rather than poisoning the entire pack.
+            _v = result.get('voltage', 0)
+            _s = result.get('soc', 0)
+            _t = result.get('thermal_T_core_c', 25)
+            if (not np.isfinite(_v) or not np.isfinite(_s) or not np.isfinite(_t)):
+                logger.warning(
+                    'NaN/Inf in pack cell %s — clamping to safe state',
+                    cell.config.cell_id,
+                )
+                soc_safe = float(np.clip(cell.ecm.state[0], 0.05, 0.95))
+                cell.ecm._state = np.array([soc_safe, 0.0, 0.0])
+                T_amb = cell.thermal.params.T_ambient_k
+                cell.thermal._state = np.array([T_amb, T_amb])
+                # Re-step to get a clean result dict
+                result = cell.step(0.0, dt)
+
             cell_states.append(result)
 
         # ── Inter-cell thermal coupling ──────────────────────────────

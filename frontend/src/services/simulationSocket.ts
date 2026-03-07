@@ -27,8 +27,11 @@ let _ws: WebSocket | null = null;
 let _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let _frameCounter = 0;
 let _intentionalClose = false;
+let _reconnectAttempts = 0;
 
-const RECONNECT_DELAY = 2000;
+const RECONNECT_BASE_DELAY = 1500;
+const RECONNECT_MAX_DELAY = 30000;
+const MAX_RECONNECT_ATTEMPTS = 50;
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
@@ -140,12 +143,20 @@ export function connectSimulation() {
   const store = getStore();
   store.setStatus('connecting');
 
-  const ws = new WebSocket(WS_URL);
+  let ws: WebSocket;
+  try {
+    ws = new WebSocket(WS_URL);
+  } catch (e) {
+    console.error('[WS] Failed to create WebSocket:', e);
+    store.setStatus('idle');
+    _scheduleReconnect();
+    return;
+  }
   _ws = ws;
 
   ws.onopen = () => {
     console.log('[WS] Connected to simulation server');
-    // Status will be set properly when we receive the 'connected' message
+    _reconnectAttempts = 0; // Reset backoff on successful connection
   };
 
   ws.onmessage = handleMessage;
@@ -155,7 +166,7 @@ export function connectSimulation() {
     _ws = null;
     if (!_intentionalClose) {
       store.setStatus('idle');
-      _reconnectTimer = setTimeout(connectSimulation, RECONNECT_DELAY);
+      _scheduleReconnect();
     }
   };
 
@@ -163,6 +174,22 @@ export function connectSimulation() {
     console.error('[WS] Error:', err);
     ws.close();
   };
+}
+
+function _scheduleReconnect() {
+  if (_intentionalClose) return;
+  if (_reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    console.warn(`[WS] Max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Giving up.`);
+    return;
+  }
+  // Exponential backoff: 1.5s, 3s, 6s, 12s, ... capped at 30s
+  const delay = Math.min(
+    RECONNECT_BASE_DELAY * Math.pow(2, _reconnectAttempts),
+    RECONNECT_MAX_DELAY,
+  );
+  _reconnectAttempts++;
+  console.log(`[WS] Reconnecting in ${delay}ms (attempt ${_reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+  _reconnectTimer = setTimeout(connectSimulation, delay);
 }
 
 export function disconnectSimulation() {
@@ -181,8 +208,12 @@ export function disconnectSimulation() {
 
 function send(msg: WSAction) {
   if (_ws?.readyState === WebSocket.OPEN) {
-    _ws.send(JSON.stringify(msg));
-    console.log('[WS] Sent:', msg.action);
+    try {
+      _ws.send(JSON.stringify(msg));
+      console.log('[WS] Sent:', msg.action);
+    } catch (e) {
+      console.error('[WS] Send failed:', e);
+    }
   } else {
     console.warn('[WS] Cannot send (readyState=' + (_ws?.readyState ?? 'null') + '):', msg.action);
     // Attempt reconnection if not connected
@@ -215,24 +246,28 @@ export function simStop() {
 }
 
 export function simReset(soc = 0.8, tempC = 25, resetDeg = false) {
+  // Clamp inputs to safe ranges
+  const safeSoc = Math.max(0, Math.min(1, isFinite(soc) ? soc : 0.8));
+  const safeTemp = Math.max(-40, Math.min(80, isFinite(tempC) ? tempC : 25));
   const store = getStore();
   store.clearHistory();
   _frameCounter = 0;
   store.setStatus('idle');
-  store.setBatteryState(null as unknown as BatteryState);
+  store.setBatteryState(null!);
   store.clearPackCellStates();
   store.clearFocusedCell();
-  store.setBmsStatus(null as any);
+  store.setBmsStatus(null!);
   send({
     action: 'reset',
-    soc,
-    temperature_c: tempC,
+    soc: safeSoc,
+    temperature_c: safeTemp,
     reset_degradation: resetDeg,
   });
 }
 
 export function simSetSpeed(value: number) {
-  send({ action: 'set_speed', value });
+  const safeValue = Math.max(0.1, Math.min(1000, isFinite(value) ? value : 1));
+  send({ action: 'set_speed', value: safeValue });
 }
 
 export function simSetProfile(type: string, params: Record<string, number> = {}) {

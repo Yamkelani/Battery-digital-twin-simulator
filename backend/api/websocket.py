@@ -10,12 +10,17 @@ Manages WebSocket connections for:
 """
 
 import json
+import math
 import asyncio
+import logging
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import Dict, Any, Set
 
 from api.schemas import parse_ws_message
+from api.utils import convert_numpy, sanitize_float, deep_sanitize
+
+logger = logging.getLogger("battery_dt.ws")
 
 ws_router = APIRouter()
 
@@ -46,7 +51,7 @@ def _on_sim_task_done(task: asyncio.Task):
     global _simulation_task
     if _simulation_task is task:
         _simulation_task = None
-        print("[WS] Simulation task finished (reference cleaned up)")
+        logger.info("Simulation task finished (reference cleaned up)")
 
 
 def _reset_energy_tracking(engine):
@@ -59,37 +64,10 @@ def _reset_energy_tracking(engine):
     engine._energy_eff = 0.0
 
 
-def _sanitize_float(v):
-    """Replace NaN / Inf with JSON-safe values."""
-    import math
-    if isinstance(v, float):
-        if math.isnan(v) or math.isinf(v):
-            return None
-    return v
-
-
-def _convert_numpy(obj):
-    """Recursively convert numpy types to native Python types for JSON serialization.
-    Also sanitises NaN / Inf which produce non-standard JSON tokens that
-    JavaScript's JSON.parse() rejects, silently killing the WS data stream."""
-    if isinstance(obj, dict):
-        return {k: _convert_numpy(v) for k, v in obj.items()}
-    elif isinstance(obj, (list, tuple)):
-        return [_convert_numpy(item) for item in obj]
-    elif isinstance(obj, np.ndarray):
-        # Replace NaN/Inf inside arrays before converting
-        cleaned = np.where(np.isfinite(obj), obj, 0.0)
-        return cleaned.tolist()
-    elif isinstance(obj, (np.integer,)):
-        return int(obj)
-    elif isinstance(obj, (np.floating,)):
-        val = float(obj)
-        return _sanitize_float(val)
-    elif isinstance(obj, np.bool_):
-        return bool(obj)
-    elif isinstance(obj, float):
-        return _sanitize_float(obj)
-    return obj
+# _convert_numpy and _sanitize_float are now in api.utils
+# Keep a backward-compatible alias so existing imports still work.
+_convert_numpy = convert_numpy
+_sanitize_float = sanitize_float
 
 
 async def broadcast(data: Dict[str, Any]):
@@ -118,19 +96,7 @@ async def broadcast(data: Dict[str, Any]):
             compact[k] = _convert_numpy(v)
 
     # Final safety: replace any remaining Python float NaN/Inf
-    # (e.g. from plain dicts that bypassed _convert_numpy)
-    import math
-
-    def _deep_sanitize(o):
-        if isinstance(o, dict):
-            return {k: _deep_sanitize(v) for k, v in o.items()}
-        elif isinstance(o, (list, tuple)):
-            return [_deep_sanitize(i) for i in o]
-        elif isinstance(o, float) and (math.isnan(o) or math.isinf(o)):
-            return None
-        return o
-
-    compact = _deep_sanitize(compact)
+    compact = deep_sanitize(compact)
     message = json.dumps(compact)
 
     disconnected = set()
@@ -193,10 +159,16 @@ async def simulation_websocket(websocket: WebSocket):
 
     try:
         while True:
-            # Receive client commands
-            data = await websocket.receive_json()
+            # ── Receive & validate ─────────────────────────────────────
+            try:
+                data = await websocket.receive_json()
+            except json.JSONDecodeError as jde:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Invalid JSON: {jde}",
+                })
+                continue
 
-            # ── Validate with Pydantic ───────────────────────────────
             try:
                 msg = parse_ws_message(data)
             except Exception as ve:
@@ -208,178 +180,177 @@ async def simulation_websocket(websocket: WebSocket):
 
             action = data.get("action", "")
 
-            if action == "start":
-                print(f"[WS] Start requested (state={engine.state.value})")
-                _user_stopped = False
-                if _simulation_task and not _simulation_task.done():
-                    # Already running — confirm the actual status back
-                    await websocket.send_json({"type": "status", "status": "running"})
-                    continue
+            # ── Dispatch action (wrapped for safety) ────────────────────
+            try:
+                if action == "start":
+                    logger.info('Start requested (state=%s)', engine.state.value)
+                    _user_stopped = False
+                    if _simulation_task and not _simulation_task.done():
+                        await websocket.send_json({"type": "status", "status": "running"})
+                        continue
 
-                # Clean up any finished task reference
-                _simulation_task = None
+                    _simulation_task = None
+                    engine._sim_time = 0.0
+                    engine.state = engine.state.__class__("idle")
+                    _reset_energy_tracking(engine)
+                    engine.cell.config.degradation_time_factor = 100.0
 
-                # Reset sim time & engine state so the profile starts fresh
-                engine._sim_time = 0.0
-                engine.state = engine.state.__class__("idle")
-                _reset_energy_tracking(engine)
+                    if not engine._profile:
+                        engine.set_profile("constant_discharge", c_rate=0.5)
 
-                # Ensure accelerated aging is set
-                engine.cell.config.degradation_time_factor = 100.0
-
-                # Ensure a profile is set
-                if not engine._profile:
-                    engine.set_profile("constant_discharge", c_rate=0.5)
-
-                # Configure callback for streaming
-                engine.set_callback(broadcast)
-
-                # Start simulation in background task
-                _simulation_task = asyncio.create_task(_run_simulation(engine))
-                _simulation_task.add_done_callback(_on_sim_task_done)
-                await broadcast({"type": "status", "status": "running"})
-                print("[WS] Simulation started")
-
-            elif action == "pause":
-                if _simulation_task and not _simulation_task.done() and engine.state.value == "running":
-                    engine.pause()
-                    await broadcast({"type": "status", "status": "paused"})
-                    print("[WS] Paused")
-                else:
-                    # Send the *actual* engine status so the frontend self-corrects
-                    actual = engine.state.value
-                    mapped = "idle" if actual in ("idle", "completed") else actual
-                    await websocket.send_json({"type": "status", "status": mapped})
-                    print(f"[WS] Pause rejected (state={actual})")
-
-            elif action == "resume":
-                if _simulation_task and not _simulation_task.done() and engine.state.value == "paused":
-                    engine.resume()
+                    engine.set_callback(broadcast)
+                    _simulation_task = asyncio.create_task(_run_simulation(engine))
+                    _simulation_task.add_done_callback(_on_sim_task_done)
                     await broadcast({"type": "status", "status": "running"})
-                    print("[WS] Resumed")
-                else:
-                    actual = engine.state.value
-                    mapped = "idle" if actual in ("idle", "completed") else actual
-                    await websocket.send_json({"type": "status", "status": mapped})
-                    print(f"[WS] Resume rejected (state={actual})")
+                    logger.info('Simulation started')
 
-            elif action == "stop":
-                print(f"[WS] Stop requested (state={engine.state.value})")
-                _user_stopped = True
-                await _cancel_simulation(engine)
-                engine.state = engine.state.__class__("idle")
-                await broadcast({"type": "status", "status": "idle"})
-                print("[WS] Stopped")
+                elif action == "pause":
+                    if _simulation_task and not _simulation_task.done() and engine.state.value == "running":
+                        engine.pause()
+                        await broadcast({"type": "status", "status": "paused"})
+                        logger.info('Paused')
+                    else:
+                        actual = engine.state.value
+                        mapped = "idle" if actual in ("idle", "completed") else actual
+                        await websocket.send_json({"type": "status", "status": mapped})
+                        logger.debug('Pause rejected (state=%s)', actual)
 
-            elif action == "reset":
-                _user_stopped = False
-                # Properly cancel old task before resetting
-                await _cancel_simulation(engine)
+                elif action == "resume":
+                    if _simulation_task and not _simulation_task.done() and engine.state.value == "paused":
+                        engine.resume()
+                        await broadcast({"type": "status", "status": "running"})
+                        logger.info('Resumed')
+                    else:
+                        actual = engine.state.value
+                        mapped = "idle" if actual in ("idle", "completed") else actual
+                        await websocket.send_json({"type": "status", "status": mapped})
+                        logger.debug('Resume rejected (state=%s)', actual)
 
-                soc = data.get("soc", 0.5)
-                temp = data.get("temperature_c", 25.0)
-                reset_deg = data.get("reset_degradation", False)
-                engine.reset(soc, temp, reset_deg)
-                _reset_energy_tracking(engine)
-                engine.cell.config.degradation_time_factor = 100.0
+                elif action == "stop":
+                    logger.info('Stop requested (state=%s)', engine.state.value)
+                    _user_stopped = True
+                    await _cancel_simulation(engine)
+                    engine.state = engine.state.__class__("idle")
+                    await broadcast({"type": "status", "status": "idle"})
+                    logger.info('Stopped')
 
-                # Also reset the pack and BMS if they exist
-                try:
-                    from api.routes import get_pack, get_bms
-                    pack = get_pack()
-                    if pack is not None:
-                        pack.reset(soc, temp, reset_deg)
-                    bms = get_bms()
-                    if bms is not None:
-                        bms.reset()
-                except Exception as e:
-                    print(f"[WS] Pack/BMS reset error: {e}")
+                elif action == "reset":
+                    _user_stopped = False
+                    await _cancel_simulation(engine)
 
-                await broadcast({"type": "status", "status": "idle"})
-                print("[WS] Reset complete")
+                    soc = data.get("soc", 0.5)
+                    temp = data.get("temperature_c", 25.0)
+                    reset_deg = data.get("reset_degradation", False)
+                    engine.reset(soc, temp, reset_deg)
+                    _reset_energy_tracking(engine)
+                    engine.cell.config.degradation_time_factor = 100.0
 
-            elif action == "set_speed":
-                speed = data.get("value", 1.0)
-                engine.sim_config.speed_multiplier = max(0.1, min(speed, 1000))
-                await websocket.send_json({
-                    "type": "config",
-                    "speed": engine.sim_config.speed_multiplier,
-                })
+                    try:
+                        from api.routes import get_pack, get_bms
+                        pack = get_pack()
+                        if pack is not None:
+                            pack.reset(soc, temp, reset_deg)
+                        bms = get_bms()
+                        if bms is not None:
+                            bms.reset()
+                    except Exception as e:
+                        logger.warning('Pack/BMS reset error: %s', e)
 
-            elif action == "set_profile":
-                profile_type = data.get("type", "constant_discharge")
-                params = data.get("params", {})
-                try:
-                    info = engine.set_profile(profile_type, **params)
+                    await broadcast({"type": "status", "status": "idle"})
+                    logger.info('Reset complete')
+
+                elif action == "set_speed":
+                    speed = data.get("value", 1.0)
+                    engine.sim_config.speed_multiplier = max(0.1, min(speed, 1000))
                     await websocket.send_json({
-                        "type": "profile",
-                        "profile": info,
+                        "type": "config",
+                        "speed": engine.sim_config.speed_multiplier,
                     })
-                except ValueError as e:
-                    await websocket.send_json({"type": "error", "message": str(e)})
 
-            elif action == "configure_cell":
-                from models.battery_cell import BatteryCellConfig
-                from simulation.engine import SimulationEngine
+                elif action == "set_profile":
+                    profile_type = data.get("type", "constant_discharge")
+                    params = data.get("params", {})
+                    try:
+                        info = engine.set_profile(profile_type, **params)
+                        await websocket.send_json({
+                            "type": "profile",
+                            "profile": info,
+                        })
+                    except ValueError as e:
+                        await websocket.send_json({"type": "error", "message": str(e)})
 
-                cell_config = BatteryCellConfig(
-                    nominal_capacity_ah=data.get("capacity_ah", 50.0),
-                    initial_soc=data.get("soc", 0.5),
-                    initial_temperature_c=data.get("temperature_c", 25.0),
-                    enable_thermal=data.get("enable_thermal", True),
-                    enable_degradation=data.get("enable_degradation", True),
-                    enable_electrochemical=data.get("enable_electrochemical", True),
-                )
-                cell_config.degradation_time_factor = data.get("degradation_acceleration", 1.0)
+                elif action == "configure_cell":
+                    from models.battery_cell import BatteryCellConfig
+                    from simulation.engine import SimulationEngine
 
-                new_engine = SimulationEngine(cell_config, engine.sim_config)
-                from api.routes import set_engine
-                set_engine(new_engine)
-                engine = new_engine
+                    cell_config = BatteryCellConfig(
+                        nominal_capacity_ah=data.get("capacity_ah", 50.0),
+                        initial_soc=data.get("soc", 0.5),
+                        initial_temperature_c=data.get("temperature_c", 25.0),
+                        enable_thermal=data.get("enable_thermal", True),
+                        enable_degradation=data.get("enable_degradation", True),
+                        enable_electrochemical=data.get("enable_electrochemical", True),
+                    )
+                    cell_config.degradation_time_factor = data.get("degradation_acceleration", 1.0)
 
-                await websocket.send_json({
-                    "type": "config",
-                    "message": "Cell reconfigured",
-                })
+                    new_engine = SimulationEngine(cell_config, engine.sim_config)
+                    from api.routes import set_engine
+                    set_engine(new_engine)
+                    engine = new_engine
 
-            elif action == "set_ambient_temp":
-                temp_c = data.get("value", 25.0)
-                engine.cell.thermal.params.T_ambient_k = temp_c + 273.15
-                await websocket.send_json({
-                    "type": "config",
-                    "ambient_temp_c": temp_c,
-                })
+                    await websocket.send_json({
+                        "type": "config",
+                        "message": "Cell reconfigured",
+                    })
 
-            elif action == "configure_pack":
-                from models.battery_pack import BatteryPack, PackConfig
-                from api.routes import set_pack
+                elif action == "set_ambient_temp":
+                    temp_c = data.get("value", 25.0)
+                    engine.cell.thermal.params.T_ambient_k = temp_c + 273.15
+                    await websocket.send_json({
+                        "type": "config",
+                        "ambient_temp_c": temp_c,
+                    })
 
-                pack_cfg = PackConfig(
-                    n_series=data.get("n_series", 4),
-                    n_parallel=data.get("n_parallel", 2),
-                    base_capacity_ah=data.get("capacity_ah", 50.0),
-                    capacity_variation_pct=data.get("variation_pct", 2.0),
-                    enable_thermal=data.get("enable_thermal_coupling", True),
-                    enable_degradation=True,
-                    degradation_time_factor=data.get("degradation_time_factor", 100.0),
-                )
-                pack = BatteryPack(pack_cfg)
-                set_pack(pack)
+                elif action == "configure_pack":
+                    from models.battery_pack import BatteryPack, PackConfig
+                    from api.routes import set_pack
 
-                pack_msg = {
-                    "type": "pack_configured",
-                    "n_series": pack_cfg.n_series,
-                    "n_parallel": pack_cfg.n_parallel,
-                    "n_cells": pack.n_cells,
-                    "cells": _convert_numpy(pack.get_cell_summary()),
-                }
-                # Direct reply to requesting client (reliable)
-                await websocket.send_json(pack_msg)
-                # Also broadcast to other connected clients
-                await broadcast(pack_msg)
+                    pack_cfg = PackConfig(
+                        n_series=data.get("n_series", 4),
+                        n_parallel=data.get("n_parallel", 2),
+                        base_capacity_ah=data.get("capacity_ah", 50.0),
+                        capacity_variation_pct=data.get("variation_pct", 2.0),
+                        enable_thermal=data.get("enable_thermal_coupling", True),
+                        enable_degradation=True,
+                        degradation_time_factor=data.get("degradation_time_factor", 100.0),
+                    )
+                    pack = BatteryPack(pack_cfg)
+                    set_pack(pack)
+
+                    pack_msg = {
+                        "type": "pack_configured",
+                        "n_series": pack_cfg.n_series,
+                        "n_parallel": pack_cfg.n_parallel,
+                        "n_cells": pack.n_cells,
+                        "cells": _convert_numpy(pack.get_cell_summary()),
+                    }
+                    await websocket.send_json(pack_msg)
+                    await broadcast(pack_msg)
+
+            except Exception as action_exc:
+                logger.exception("Error handling action '%s': %s", action, action_exc)
+                try:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": f"Server error handling '{action}': {str(action_exc)[:200]}",
+                    })
+                except Exception:
+                    pass
 
     except WebSocketDisconnect:
         pass
+    except Exception as exc:
+        logger.exception("Unexpected WS handler error: %s", exc)
     finally:
         _clients.discard(websocket)
 
@@ -396,15 +367,13 @@ async def _run_simulation(engine):
     global _user_stopped
 
     try:
-        print("[WS] Simulation task running...")
+        logger.info('Simulation task running...')
         await engine.run_async()
-        print("[WS] Engine run_async completed normally")
+        logger.info('Engine run_async completed normally')
     except asyncio.CancelledError:
-        print("[WS] Simulation task cancelled")
+        logger.info('Simulation task cancelled')
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        print(f"[SIM ERROR] {e}")
+        logger.exception('Simulation error: %s', e)
         try:
             await broadcast({
                 "type": "error",
@@ -419,7 +388,7 @@ async def _run_simulation(engine):
 
     # Notify all clients that the simulation finished
     final_status = "idle" if _user_stopped else "completed"
-    print(f"[WS] Simulation ended -> broadcasting '{final_status}'")
+    logger.info('Simulation ended -> broadcasting %r', final_status)
     try:
         await broadcast({"type": "status", "status": final_status})
     except Exception:

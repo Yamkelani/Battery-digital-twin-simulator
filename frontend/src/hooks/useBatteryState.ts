@@ -6,7 +6,16 @@
  */
 
 import { create } from 'zustand';
-import type { BatteryState, ChartDataPoint, SimStatus, LoadProfile, BMSStatus } from '../types/battery';
+import type {
+  BatteryState,
+  ChartDataPoint,
+  SimStatus,
+  LoadProfile,
+  BMSStatus,
+  DashboardView,
+  PackCellState,
+  PackThermalLink,
+} from '../types/battery';
 
 const MAX_HISTORY = 2000;
 
@@ -33,8 +42,8 @@ interface BatteryStore {
   // UI state
   showDashboard: boolean;
   toggleDashboard: () => void;
-  selectedView: '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv' | 'bms' | 'cccv' | 'rul' | 'ml-data' | 'thermal' | 'aging' | 'safety' | 'balancing' | 'sweep' | 'physics' | 'wizard' | 'tuner' | 'quickstart';
-  setSelectedView: (v: '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv' | 'bms' | 'cccv' | 'rul' | 'ml-data' | 'thermal' | 'aging' | 'safety' | 'balancing' | 'sweep' | 'physics' | 'wizard' | 'tuner' | 'quickstart') => void;
+  selectedView: DashboardView;
+  setSelectedView: (v: DashboardView) => void;
 
   // Simulation speed
   speed: number;
@@ -49,9 +58,9 @@ interface BatteryStore {
   clearPack: () => void;
 
   // Live pack cell data (from WebSocket)
-  packCellStates: any[] | null;
-  packThermalLinks: any[] | null;
-  setPackCellStates: (cells: any[], links: any[]) => void;
+  packCellStates: PackCellState[] | null;
+  packThermalLinks: PackThermalLink[] | null;
+  setPackCellStates: (cells: PackCellState[], links: PackThermalLink[]) => void;
   clearPackCellStates: () => void;
 
   // Focused cell (click-to-zoom in pack view)
@@ -94,12 +103,19 @@ export const useBatteryStore = create<BatteryStore>((set, get) => ({
       energyEff: state.energy_efficiency ?? 0,
       rulCycles: state.rul_cycles ?? 0,
     };
-    set((prev) => ({
-      chartHistory:
-        prev.chartHistory.length >= MAX_HISTORY
-          ? [...prev.chartHistory.slice(-MAX_HISTORY + 1), point]
-          : [...prev.chartHistory, point],
-    }));
+    set((prev) => {
+      // Efficient ring-buffer: mutate-in-place then return a new ref.
+      // Avoids O(n) spread on every single data point.
+      const history = prev.chartHistory;
+      history.push(point);
+      if (history.length > MAX_HISTORY) {
+        // Trim oldest 10% in one slice instead of shifting 1-by-1
+        const trimCount = Math.max(1, Math.floor(MAX_HISTORY * 0.1));
+        return { chartHistory: history.slice(trimCount) };
+      }
+      // New array reference so Zustand/React detects the change
+      return { chartHistory: [...history] };
+    });
   },
   clearHistory: () => set({ chartHistory: [] }),
 

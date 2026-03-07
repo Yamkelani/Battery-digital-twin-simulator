@@ -751,7 +751,7 @@ export default function PackView3D() {
   // Keep a reference to the last valid pack data so cells don't vanish
   // during brief WS gaps or data transitions.
   const renderData = useMemo(() => {
-    if (effectivePackData && effectivePackData.cells.length > 0) {
+    if (effectivePackData && Array.isArray(effectivePackData.cells) && effectivePackData.cells.length > 0) {
       lastGoodPackRef.current = effectivePackData;
       return effectivePackData;
     }
@@ -771,7 +771,7 @@ export default function PackView3D() {
   /* ---- Cell positions map ---- */
   const cellPositions = useMemo(() => {
     const map = new Map<string, [number, number, number]>();
-    if (!renderData) return map;
+    if (!renderData || !Array.isArray(renderData.cells)) return map;
     const halfW = ((layout.cols - 1) * SPACING_X) / 2;
     const halfZ = ((layout.rows - 1) * SPACING_Z) / 2;
     renderData.cells.forEach((cell, idx) => {
@@ -784,7 +784,7 @@ export default function PackView3D() {
     return map;
   }, [renderData, layout]);
 
-  if (!renderData || renderData.cells.length === 0) return null;
+  if (!renderData || !Array.isArray(renderData.cells) || renderData.cells.length === 0) return null;
 
   const halfW = ((layout.cols - 1) * SPACING_X) / 2;
   const halfZ = ((layout.rows - 1) * SPACING_Z) / 2;
@@ -835,7 +835,7 @@ export default function PackView3D() {
             </group>
 
             {/* Label — skip for large packs to save GPU textures */}
-            {renderData.cells.length <= 24 && (
+            {(renderData.cells?.length ?? 0) <= 24 && (
               <CellLabel position={[x, 0.75, z]} label={cell.cell_id.replace('CELL_', 'C')} />
             )}
           </group>

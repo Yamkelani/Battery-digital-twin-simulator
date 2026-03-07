@@ -13,13 +13,16 @@ Provides HTTP endpoints for:
 
 import csv
 import io
+import logging
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
-import sys, os
 import numpy as np
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from api.utils import convert_numpy
+
+logger = logging.getLogger("battery_dt.api")
 
 router = APIRouter(prefix="/api", tags=["battery"])
 
@@ -69,21 +72,8 @@ class SimulationResponse(BaseModel):
     data: Optional[Dict[str, Any]] = None
 
 
-def _convert_numpy(obj):
-    """Convert numpy types to native Python for JSON serialization."""
-    if isinstance(obj, dict):
-        return {k: _convert_numpy(v) for k, v in obj.items()}
-    elif isinstance(obj, (list, tuple)):
-        return [_convert_numpy(item) for item in obj]
-    elif isinstance(obj, np.ndarray):
-        return obj.tolist()
-    elif isinstance(obj, (np.integer,)):
-        return int(obj)
-    elif isinstance(obj, (np.floating,)):
-        return float(obj)
-    elif isinstance(obj, np.bool_):
-        return bool(obj)
-    return obj
+# Use shared utility — keep alias for backward compat
+_convert_numpy = convert_numpy
 
 
 # ─── Simulation Engine Instance ──────────────────────────────────────────────
@@ -930,7 +920,7 @@ async def inject_fault(req: FaultInjectionRequest) -> SimulationResponse:
         # Instant capacity loss
         fade_pct = req.severity * 30.0  # up to 30% instant fade
         if hasattr(cell, 'degradation'):
-            cell.degradation.total_capacity_loss += fade_pct / 100.0
+            cell.degradation.sei_capacity_loss += fade_pct / 100.0
         msg = f"Capacity fade injected: {fade_pct:.1f}% instant loss"
 
     else:

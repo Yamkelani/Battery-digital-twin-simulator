@@ -21,7 +21,10 @@ frontend/.vite/
 release/
 frontend/build/*.ico
 frontend/build/*.icns
-frontend/build/*.png
+
+# Capacitor native projects (generated, not committed)
+frontend/android/
+frontend/ios/
 
 # IDE
 .vscode/

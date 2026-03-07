@@ -219,6 +219,47 @@ export interface VisualizationData {
 
 export type SimStatus = 'idle' | 'running' | 'paused' | 'completed' | 'error' | 'connecting';
 
+// ─── Dashboard View ────────────────────────────────────────────────────────
+
+export type DashboardView =
+  | '3d' | 'charts' | 'split' | 'nyquist' | 'dqdv' | 'bms'
+  | 'cccv' | 'rul' | 'ml-data' | 'thermal' | 'aging' | 'safety'
+  | 'balancing' | 'sweep' | 'physics' | 'wizard' | 'tuner' | 'quickstart';
+
+// ─── Pack Cell State (per-cell WS data) ────────────────────────────────────
+
+export interface PackCellState {
+  cell_id: string;
+  soc: number;
+  voltage: number;
+  current: number;
+  temp_c: number;
+  temp_surface_c: number;
+  temp_gradient_c: number;
+  soh_pct: number;
+  sei_loss_pct: number;
+  plating_loss_pct: number;
+  cycle_loss_pct: number;
+  capacity_ah: number;
+  resistance_factor: number;
+  heat_w: number;
+  is_edge_cell: boolean;
+  h_conv_effective: number;
+  is_balancing?: boolean;
+}
+
+export interface PackThermalLink {
+  from: string;
+  to: string;
+  heat_flow_w: number;
+  temp_diff_c: number;
+  from_temp_c: number;
+  to_temp_c: number;
+  from_surface_c: number;
+  to_surface_c: number;
+  coupling_type: 'series' | 'parallel';
+}
+
 // ─── BMS Types ─────────────────────────────────────────────────────────────
 
 export interface BMSStatus {

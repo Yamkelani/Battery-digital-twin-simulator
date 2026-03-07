@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="384" height="384" viewBox="0 0 384 384">
+  <rect width="384" height="384" rx="69" fill="#0f172a"/>
+  <!-- Battery cap -->
+  <rect x="158" y="63" width="69" height="38" rx="15" fill="none" stroke="#e2e8f0" stroke-width="10"/>
+  <!-- Battery body -->
+  <rect x="106" y="86" width="173" height="250" rx="15" fill="none" stroke="#e2e8f0" stroke-width="10"/>
+  <!-- Charge fill -->
+  <rect x="123" y="93" width="139" height="225" rx="13" fill="#22c55e"/>
+  <!-- Lightning bolt -->
+  <polygon points="199.68,115.19999999999999 161.28,199.68 184.32,199.68 176.64000000000001,276.48 222.71999999999997,184.32 199.68,184.32" fill="#fbbf24" opacity="0.9"/>
+</svg>

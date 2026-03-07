@@ -48,6 +48,9 @@ export default function Controls() {
   const [enableDegradation, setEnableDegradation] = useState(true);
   const [enableElectrochemical, setEnableElectrochemical] = useState(true);
   const [degradationAccel, setDegradationAccel] = useState(1);
+  const [powerW, setPowerW] = useState(200);
+  const [pulseCRate, setPulseCRate] = useState(3.0);
+  const [maxCRate, setMaxCRate] = useState(1.0);
 
   const handleProfileChange = useCallback(
     (profileId: string) => {
@@ -74,11 +77,31 @@ export default function Controls() {
           params.c_rate = cRate;
           params.num_cycles = 50;
           break;
+        case 'pulse_discharge':
+          params.pulse_c_rate = pulseCRate;
+          params.pulse_duration_s = 10;
+          params.rest_duration_s = 30;
+          params.num_pulses = 100;
+          break;
+        case 'rest_storage':
+          params.duration_s = 86400;
+          break;
+        case 'constant_power':
+          params.power_w = powerW;
+          break;
+        case 'grid_regulation':
+          params.max_c_rate = maxCRate;
+          params.duration_s = 3600;
+          break;
+        case 'hppc':
+          params.pulse_c_rate = pulseCRate;
+          params.soc_points = 10;
+          break;
       }
 
       setProfile(profileId, params);
     },
-    [cRate, aggressiveness, pvPeak, setProfile, setActiveProfile],
+    [cRate, aggressiveness, pvPeak, powerW, pulseCRate, maxCRate, setProfile, setActiveProfile],
   );
 
   const handleSpeedChange = useCallback(
@@ -219,11 +242,16 @@ export default function Controls() {
           <option value="drive_cycle">Drive Cycle (EV)</option>
           <option value="solar_storage">Solar + Storage</option>
           <option value="cycle_aging">Cycle Aging Test</option>
+          <option value="pulse_discharge">Pulse Discharge</option>
+          <option value="rest_storage">Calendar Storage</option>
+          <option value="constant_power">Constant Power</option>
+          <option value="grid_regulation">Grid Regulation</option>
+          <option value="hppc">HPPC Test</option>
         </select>
       </div>
 
       {/* Profile-specific params */}
-      {(activeProfile.includes('constant') ||
+      {(activeProfile.includes('constant') && activeProfile !== 'constant_power' ||
         activeProfile === 'cccv_charge' ||
         activeProfile === 'cycle_aging') && (
         <SliderControl
@@ -255,6 +283,39 @@ export default function Controls() {
           max={15}
           step={0.5}
           onChange={(v) => setPvPeak(v)}
+        />
+      )}
+
+      {activeProfile === 'constant_power' && (
+        <SliderControl
+          label={`Power: ${powerW}W`}
+          value={powerW}
+          min={10}
+          max={2000}
+          step={10}
+          onChange={(v) => setPowerW(v)}
+        />
+      )}
+
+      {(activeProfile === 'pulse_discharge' || activeProfile === 'hppc') && (
+        <SliderControl
+          label={`Pulse C-Rate: ${pulseCRate.toFixed(1)}C`}
+          value={pulseCRate}
+          min={0.5}
+          max={5.0}
+          step={0.5}
+          onChange={(v) => setPulseCRate(v)}
+        />
+      )}
+
+      {activeProfile === 'grid_regulation' && (
+        <SliderControl
+          label={`Max C-Rate: ${maxCRate.toFixed(1)}C`}
+          value={maxCRate}
+          min={0.2}
+          max={3.0}
+          step={0.1}
+          onChange={(v) => setMaxCRate(v)}
         />
       )}
 

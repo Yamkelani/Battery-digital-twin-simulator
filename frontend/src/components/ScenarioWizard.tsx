@@ -14,6 +14,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Rocket, Snowflake, Zap, Sun, Car, Factory, Battery, Timer, Droplets,
   ArrowRight, ArrowLeft, Check, Play, Thermometer, Gauge, Info,
+  Radio, Archive, Plug, Activity, FlaskConical,
 } from 'lucide-react';
 import { API_BASE } from '../config';
 import { useBatteryStore } from '../hooks/useBatteryState';
@@ -139,6 +140,86 @@ const SCENARIOS: ScenarioDef[] = [
       enableElectrochemical: true, degradationAccel: 1,
     },
   },
+  {
+    id: 'pulse_power', name: 'Pulse Power Test', icon: Activity, color: '#f43f5e',
+    tagline: 'High-current intermittent discharge pulses',
+    description: 'Test battery response to repeated high-current discharge pulses separated by rest periods. This profile is used in power tools, grid frequency regulation, automotive start-stop, and radar/communication systems.',
+    learnPoints: [
+      'Pulse loads cause sharp transient voltage drops (IR + RC dynamics)',
+      'RC pair recovery during rest reveals internal impedance characteristics',
+      'Repeated pulsing generates significant heat from I²R losses',
+      'Voltage recovery during rest shows diffusion polarization relaxation',
+    ],
+    defaults: {
+      profile: 'pulse_discharge', soc: 0.95, temp: 25, ambientTemp: 25,
+      cRate: 3.0, speed: 20, humidity: 50, enableThermal: true, enableDegradation: true,
+      enableElectrochemical: true, degradationAccel: 1,
+    },
+  },
+  {
+    id: 'calendar_storage', name: 'Calendar Storage Aging', icon: Archive, color: '#78716c',
+    tagline: 'Study how batteries age when sitting idle',
+    description: 'Simulate a battery at rest (no current) with accelerated aging to observe calendar degradation. SEI layer growth continues even without cycling, consuming cyclable lithium and increasing resistance.',
+    learnPoints: [
+      'SEI growth follows √t law — rapid initially, then gradually slowing',
+      'Higher temperatures dramatically accelerate calendar aging (Arrhenius)',
+      'Storage at high SOC (>80%) accelerates SEI growth on graphite anodes',
+      'Calendar aging dominates in stationary storage and seasonal vehicles',
+    ],
+    defaults: {
+      profile: 'rest_storage', soc: 0.8, temp: 35, ambientTemp: 35,
+      cRate: 0.5, speed: 200, humidity: 50, enableThermal: true, enableDegradation: true,
+      enableElectrochemical: true, degradationAccel: 500,
+    },
+  },
+  {
+    id: 'grid_storage', name: 'Grid Frequency Regulation', icon: Radio, color: '#06b6d4',
+    tagline: 'Rapid bidirectional cycling for grid services',
+    description: 'Simulate a battery energy storage system (BESS) providing grid frequency regulation. The battery rapidly alternates between charge and discharge to balance grid frequency deviations — one of the highest-value applications for batteries.',
+    learnPoints: [
+      'Regulation signals alternate charge/discharge every few seconds',
+      'Net energy throughput is high even though SOC stays near 50%',
+      'Shallow cycling at high rates still causes mechanical degradation',
+      'Thermal management is critical due to continuous heat generation',
+    ],
+    defaults: {
+      profile: 'grid_regulation', soc: 0.5, temp: 25, ambientTemp: 25,
+      cRate: 1.0, speed: 30, humidity: 50, enableThermal: true, enableDegradation: true,
+      enableElectrochemical: true, degradationAccel: 10,
+    },
+  },
+  {
+    id: 'constant_power', name: 'Constant Power Discharge', icon: Plug, color: '#a855f7',
+    tagline: 'Discharge at fixed power \u2014 current rises as voltage drops',
+    description: 'Unlike constant current, constant power discharge increases current demand as voltage drops. This is more realistic for UPS backups, EV cruise at constant speed, and grid power dispatch. Watch current increase as the cell depletes.',
+    learnPoints: [
+      'Current = Power / Voltage — increases as voltage drops',
+      'End-of-discharge current can be significantly higher than start',
+      'Heat generation accelerates toward end-of-discharge (higher I²R)',
+      'Useful for comparing different chemistries under realistic load',
+    ],
+    defaults: {
+      profile: 'constant_power', soc: 0.95, temp: 25, ambientTemp: 25,
+      cRate: 1.0, speed: 20, humidity: 50, enableThermal: true, enableDegradation: true,
+      enableElectrochemical: true, degradationAccel: 1,
+    },
+  },
+  {
+    id: 'hppc_test', name: 'HPPC Characterization', icon: FlaskConical, color: '#14b8a6',
+    tagline: 'Measure impedance & power capability at every SOC',
+    description: 'The Hybrid Pulse Power Characterization (HPPC) test is a standard battery characterization protocol. It applies discharge and charge pulses at multiple SOC levels to map internal resistance and power capability across the full SOC range.',
+    learnPoints: [
+      'Voltage response to pulse reveals R0 (instant) and R1/R2 (time constants)',
+      'Internal resistance varies with SOC — typically U-shaped',
+      'Charge and discharge resistance can differ (electrode asymmetry)',
+      'HPPC data is used to generate Ragone plots and power maps',
+    ],
+    defaults: {
+      profile: 'hppc', soc: 0.95, temp: 25, ambientTemp: 25,
+      cRate: 1.0, speed: 30, humidity: 50, enableThermal: true, enableDegradation: true,
+      enableElectrochemical: true, degradationAccel: 1,
+    },
+  },
 ];
 
 /* ── Step indicator ──────────────────────────────────────── */
@@ -203,12 +284,28 @@ export default function ScenarioWizard() {
 
       // 2. Set profile
       const profileParams: Record<string, number> = {};
-      if (params.profile.includes('constant') || params.profile === 'cccv_charge' || params.profile === 'cycle_aging') {
+      if (params.profile.includes('constant') && params.profile !== 'constant_power' || params.profile === 'cccv_charge' || params.profile === 'cycle_aging') {
         profileParams.c_rate = params.cRate;
       }
       if (params.profile === 'cycle_aging') profileParams.num_cycles = 50;
       if (params.profile === 'solar_storage') profileParams.pv_peak_kw = 5;
       if (params.profile === 'drive_cycle') profileParams.aggressiveness = 1;
+      if (params.profile === 'pulse_discharge') {
+        profileParams.pulse_c_rate = params.cRate;
+        profileParams.pulse_duration_s = 10;
+        profileParams.rest_duration_s = 30;
+        profileParams.num_pulses = 100;
+      }
+      if (params.profile === 'rest_storage') profileParams.duration_s = 86400;
+      if (params.profile === 'constant_power') profileParams.power_w = 200;
+      if (params.profile === 'grid_regulation') {
+        profileParams.max_c_rate = params.cRate;
+        profileParams.duration_s = 3600;
+      }
+      if (params.profile === 'hppc') {
+        profileParams.pulse_c_rate = params.cRate;
+        profileParams.soc_points = 10;
+      }
 
       await fetch(`${API_BASE}/profile`, {
         method: 'POST',

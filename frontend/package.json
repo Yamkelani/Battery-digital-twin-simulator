@@ -5,18 +5,43 @@
   "type": "module",
   "main": "electron/main.cjs",
   "author": "Yamkelani",
-  "description": "3D Digital Twin for Li-ion Battery Simulation",
+  "description": "3D Digital Twin for Li-ion Battery Simulation — Web, Windows, iOS, Android",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+
+    "icons:generate": "node scripts/generate-icons.cjs && node scripts/convert-icons-to-png.cjs",
+
     "electron:dev": "concurrently -n vite,electron \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "electron:build": "tsc && vite build && electron-builder --config electron-builder.json",
     "electron:build:win": "tsc && vite build && electron-builder --config electron-builder.json --win",
     "electron:build:mac": "tsc && vite build && electron-builder --config electron-builder.json --mac",
-    "electron:build:linux": "tsc && vite build && electron-builder --config electron-builder.json --linux"
+    "electron:build:linux": "tsc && vite build && electron-builder --config electron-builder.json --linux",
+
+    "cap:init": "npx cap init \"Battery Digital Twin\" com.batterysim.digitaltwin --web-dir dist",
+    "cap:build": "tsc && vite build",
+    "cap:add:android": "npx cap add android",
+    "cap:add:ios": "npx cap add ios",
+    "cap:sync": "npx cap sync",
+    "cap:open:android": "npx cap open android",
+    "cap:open:ios": "npx cap open ios",
+    "cap:run:android": "npx cap run android",
+    "cap:run:ios": "npx cap run ios",
+
+    "build:web": "tsc && vite build",
+    "build:android": "tsc && vite build && npx cap sync android",
+    "build:ios": "tsc && vite build && npx cap sync ios",
+    "build:win": "tsc && vite build && electron-builder --config electron-builder.json --win",
+    "build:all": "npm run build:web && npm run cap:sync"
   },
   "dependencies": {
+    "@capacitor/android": "^8.2.0",
+    "@capacitor/cli": "^8.2.0",
+    "@capacitor/core": "^8.2.0",
+    "@capacitor/ios": "^8.2.0",
+    "@capacitor/splash-screen": "^8.0.1",
+    "@capacitor/status-bar": "^8.0.1",
     "@react-three/drei": "^9.92.0",
     "@react-three/fiber": "^8.15.0",
     "@react-three/postprocessing": "^3.0.4",
@@ -42,9 +67,12 @@
     "electron": "^28.1.0",
     "electron-builder": "^24.13.0",
     "postcss": "^8.4.32",
+    "sharp": "^0.34.5",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.3.3",
     "vite": "^5.0.8",
-    "wait-on": "^7.2.0"
+    "vite-plugin-pwa": "^1.2.0",
+    "wait-on": "^7.2.0",
+    "workbox-window": "^7.4.0"
   }
 }

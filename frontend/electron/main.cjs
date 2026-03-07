@@ -185,7 +185,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     title: 'Battery Digital Twin — 3D Simulator',
-    icon: path.join(__dirname, '..', 'public', 'battery.svg'),
+    icon: path.join(__dirname, '..', 'build', 'icon.png'),
     backgroundColor: '#0f172a',
     show: false,
     webPreferences: {

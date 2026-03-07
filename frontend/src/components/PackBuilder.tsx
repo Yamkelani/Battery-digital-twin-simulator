@@ -7,8 +7,7 @@
 
 import { useState, useCallback } from 'react';
 import { useBatteryStore } from '../hooks/useBatteryState';
-
-const API_BASE = `http://${window.location.hostname}:8001/api`;
+import { API_BASE } from '../config';
 
 export default function PackBuilder() {
 

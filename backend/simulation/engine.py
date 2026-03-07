@@ -12,6 +12,7 @@ the simulation loop. Supports:
 
 import time
 import asyncio
+import logging
 import numpy as np
 from enum import Enum
 from typing import Optional, Dict, Any, Callable, List
@@ -25,8 +26,15 @@ from simulation.profiles import (
     DriveProfile,
     SolarStorageProfile,
     CycleAgingProfile,
+    PulseDischargeProfile,
+    RestStorageProfile,
+    ConstantPowerProfile,
+    GridRegulationProfile,
+    HPPCProfile,
 )
 from models.bms import BMSModel, BMSConfig
+
+logger = logging.getLogger("battery_dt.engine")
 
 
 class SimulationState(str, Enum):
@@ -168,6 +176,46 @@ class SimulationEngine:
                 num_cycles=kwargs.get("num_cycles", 50),
             )
 
+        elif profile_type == "pulse_discharge":
+            self._profile = PulseDischargeProfile(
+                nominal_capacity_ah=capacity,
+                pulse_c_rate=kwargs.get("pulse_c_rate", 3.0),
+                pulse_duration_s=kwargs.get("pulse_duration_s", 10.0),
+                rest_duration_s=kwargs.get("rest_duration_s", 30.0),
+                num_pulses=kwargs.get("num_pulses", 100),
+                soc_min=kwargs.get("soc_min", 0.1),
+            )
+
+        elif profile_type == "rest_storage":
+            self._profile = RestStorageProfile(
+                duration_s=kwargs.get("duration_s", 86400.0),
+                self_discharge_rate=kwargs.get("self_discharge_rate", 0.0),
+            )
+
+        elif profile_type == "constant_power":
+            self._profile = ConstantPowerProfile(
+                power_w=kwargs.get("power_w", 200.0),
+                nominal_capacity_ah=capacity,
+                soc_limit_low=kwargs.get("soc_min", 0.05),
+                soc_limit_high=kwargs.get("soc_max", 0.95),
+                duration_s=kwargs.get("duration_s", None),
+            )
+
+        elif profile_type == "grid_regulation":
+            self._profile = GridRegulationProfile(
+                nominal_capacity_ah=capacity,
+                max_c_rate=kwargs.get("max_c_rate", 1.0),
+                duration_s=kwargs.get("duration_s", 3600.0),
+                regulation_period_s=kwargs.get("regulation_period_s", 4.0),
+            )
+
+        elif profile_type == "hppc":
+            self._profile = HPPCProfile(
+                nominal_capacity_ah=capacity,
+                pulse_c_rate=kwargs.get("pulse_c_rate", 1.0),
+                soc_points=kwargs.get("soc_points", 10),
+            )
+
         else:
             raise ValueError(f"Unknown profile type: {profile_type}")
 
@@ -198,6 +246,10 @@ class SimulationEngine:
         config = self.sim_config
 
         output_accumulator = 0.0
+
+        # Cache pack/BMS accessors outside the tight loop to avoid
+        # per-step import overhead.
+        from api.routes import get_pack, get_bms
 
         try:
             while self.state in (SimulationState.RUNNING, SimulationState.PAUSED):
@@ -236,9 +288,10 @@ class SimulationEngine:
                 _s = step_result.get('soc', 0)
                 _t = step_result.get('thermal_T_core_c', 25)
                 if (not np.isfinite(_v) or not np.isfinite(_s) or not np.isfinite(_t)):
-                    import traceback
-                    print(f'[ENGINE] NaN/Inf detected at t={self._sim_time:.1f}s '
-                          f'(V={_v}, SOC={_s}, T={_t}). Clamping cell state.')
+                    logger.warning(
+                        'NaN/Inf detected at t=%.1fs (V=%s, SOC=%s, T=%s). Clamping cell state.',
+                        self._sim_time, _v, _s, _t,
+                    )
                     # Emergency clamp: reset ECM RC voltages, keep SOC
                     soc_safe = float(np.clip(self.cell.ecm.state[0], 0.05, 0.95))
                     self.cell.ecm._state = np.array([soc_safe, 0.0, 0.0])
@@ -300,7 +353,6 @@ class SimulationEngine:
 
                 # Also step the pack + BMS if one exists
                 try:
-                    from api.routes import get_pack, get_bms
                     pack = get_pack()
                     if pack is not None:
                         pack_result = pack.step(current, config.dt)
@@ -323,9 +375,7 @@ class SimulationEngine:
                         bms_status = bms.evaluate(current, self._sim_time)
                         step_result['bms'] = bms_status
                 except Exception as e:
-                    import traceback
-                    traceback.print_exc()
-                    print(f"[ENGINE] Pack/BMS step error: {e}")
+                    logger.exception('Pack/BMS step error: %s', e)
 
                 self._sim_time += config.dt
                 output_accumulator += config.dt
@@ -409,10 +459,31 @@ class SimulationEngine:
             voltage_est = self.cell.ecm.terminal_voltage(
                 self.cell.ecm.state, 0, self.cell.thermal.T_core
             )
-            current = self._profile.get_current(self._sim_time, self.cell.ecm.soc, voltage_est)
+            try:
+                current = self._profile.get_current(self._sim_time, self.cell.ecm.soc, voltage_est)
+            except Exception:
+                current = 0.0
 
             # Step the cell model
             step_result = self.cell.step(current, config.dt)
+
+            # ── NaN / Inf guard (batch mode) ──
+            _v = step_result.get('voltage', 0)
+            _s = step_result.get('soc', 0)
+            _t = step_result.get('thermal_T_core_c', 25)
+            if (not np.isfinite(_v) or not np.isfinite(_s) or not np.isfinite(_t)):
+                logger.warning(
+                    'NaN/Inf in batch at t=%.1fs (V=%s, SOC=%s, T=%s). Clamping.',
+                    self._sim_time, _v, _s, _t,
+                )
+                soc_safe = float(np.clip(self.cell.ecm.state[0], 0.05, 0.95))
+                self.cell.ecm._state = np.array([soc_safe, 0.0, 0.0])
+                T_amb = self.cell.thermal.params.T_ambient_k
+                self.cell.thermal._state = np.array([T_amb, T_amb])
+                self._sim_time += config.dt
+                step += 1
+                continue
+
             self._sim_time += config.dt
             output_accumulator += config.dt
             step += 1
@@ -510,5 +581,35 @@ class SimulationEngine:
                 "name": "Cycle Aging Test",
                 "description": "Repeated charge-discharge cycles for aging study",
                 "params": "c_rate (float), num_cycles (int), soc_min (float), soc_max (float)"
+            },
+            {
+                "id": "pulse_discharge",
+                "name": "Pulse Discharge",
+                "description": "High-current discharge pulses with rest periods (power tools, grid, radar)",
+                "params": "pulse_c_rate (float), pulse_duration_s (float), rest_duration_s (float), num_pulses (int)"
+            },
+            {
+                "id": "rest_storage",
+                "name": "Calendar Storage",
+                "description": "Rest at fixed SOC to study calendar aging (SEI growth, self-discharge)",
+                "params": "duration_s (float)"
+            },
+            {
+                "id": "constant_power",
+                "name": "Constant Power",
+                "description": "Discharge or charge at constant power — current adjusts with voltage",
+                "params": "power_w (float), soc_min (float), soc_max (float)"
+            },
+            {
+                "id": "grid_regulation",
+                "name": "Grid Frequency Regulation",
+                "description": "Rapid charge/discharge cycles for grid ancillary services",
+                "params": "max_c_rate (float), duration_s (float)"
+            },
+            {
+                "id": "hppc",
+                "name": "HPPC Test",
+                "description": "Hybrid Pulse Power Characterization — impedance & power capability at multiple SOC",
+                "params": "pulse_c_rate (float), soc_points (int)"
             },
         ]
